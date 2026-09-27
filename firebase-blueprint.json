@@ -1,0 +1,234 @@
+{
+  "entities": {
+    "Admin": {
+      "title": "Admin",
+      "description": "System administrator record for role verification",
+      "type": "object",
+      "properties": {
+        "email": {
+          "type": "string",
+          "description": "Admin email address"
+        },
+        "role": {
+          "type": "string",
+          "description": "Admin role",
+          "enum": ["admin", "superadmin"]
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Creation timestamp"
+        }
+      },
+      "required": ["email", "role"]
+    },
+    "SystemSettings": {
+      "title": "SystemSettings",
+      "description": "Global application configuration and content",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for settings doc"
+        },
+        "project_title": {
+          "type": "string",
+          "description": "Title of organization"
+        },
+        "slogan_bengali": {
+          "type": "string",
+          "description": "Slogan in Bengali"
+        },
+        "contact_email": {
+          "type": "string",
+          "description": "Official contact email"
+        }
+      },
+      "required": ["project_title"]
+    },
+    "Member": {
+      "title": "Member",
+      "description": "Registered co-operative member profile",
+      "type": "object",
+      "properties": {
+        "member_id": {
+          "type": "string",
+          "description": "Unique member code"
+        },
+        "full_name": {
+          "type": "string",
+          "description": "Member full legal name",
+          "maxLength": 150
+        },
+        "phone": {
+          "type": "string",
+          "description": "Primary mobile number",
+          "maxLength": 25
+        },
+        "email": {
+          "type": "string",
+          "description": "Member email address",
+          "maxLength": 100
+        },
+        "role": {
+          "type": "string",
+          "description": "Access role",
+          "enum": ["member", "admin", "director"]
+        },
+        "status": {
+          "type": "string",
+          "description": "Membership status",
+          "enum": ["active", "pending", "suspended"]
+        }
+      },
+      "required": ["member_id", "full_name", "phone"]
+    },
+    "MonthlyDeposit": {
+      "title": "MonthlyDeposit",
+      "description": "Monthly recurring savings installment record",
+      "type": "object",
+      "properties": {
+        "deposit_id": {
+          "type": "string",
+          "description": "Deposit record identifier"
+        },
+        "member_id": {
+          "type": "string",
+          "description": "ID of member making deposit"
+        },
+        "amount": {
+          "type": "number",
+          "description": "Deposit amount in BDT"
+        },
+        "month": {
+          "type": "string",
+          "description": "Month of deposit"
+        },
+        "year": {
+          "type": "number",
+          "description": "Year of deposit"
+        },
+        "status": {
+          "type": "string",
+          "description": "Approval status",
+          "enum": ["approved", "pending", "rejected"]
+        }
+      },
+      "required": ["deposit_id", "member_id", "amount", "status"]
+    },
+    "LumpsumDeposit": {
+      "title": "LumpsumDeposit",
+      "description": "One-time lump sum land investment deposit",
+      "type": "object",
+      "properties": {
+        "lumpsum_id": {
+          "type": "string",
+          "description": "Lumpsum record identifier"
+        },
+        "member_id": {
+          "type": "string",
+          "description": "ID of member making deposit"
+        },
+        "amount": {
+          "type": "number",
+          "description": "Investment amount in BDT"
+        },
+        "purpose": {
+          "type": "string",
+          "description": "Purpose or project name"
+        },
+        "status": {
+          "type": "string",
+          "description": "Approval status",
+          "enum": ["approved", "pending", "rejected"]
+        }
+      },
+      "required": ["lumpsum_id", "member_id", "amount", "status"]
+    },
+    "LandInvestment": {
+      "title": "LandInvestment",
+      "description": "Land investment project record",
+      "type": "object",
+      "properties": {
+        "land_id": {
+          "type": "string",
+          "description": "Land project identifier"
+        },
+        "project_name": {
+          "type": "string",
+          "description": "Project title"
+        },
+        "location": {
+          "type": "string",
+          "description": "Location of land"
+        },
+        "total_cost": {
+          "type": "number",
+          "description": "Total land cost"
+        },
+        "target_shares": {
+          "type": "number",
+          "description": "Target share count"
+        }
+      },
+      "required": ["land_id", "project_name", "location"]
+    },
+    "AppNotification": {
+      "title": "AppNotification",
+      "description": "Member notification alert",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Notification ID"
+        },
+        "member_id": {
+          "type": "string",
+          "description": "Target member ID or 'all'"
+        },
+        "title": {
+          "type": "string",
+          "description": "Notification title"
+        },
+        "message": {
+          "type": "string",
+          "description": "Notification content"
+        },
+        "read": {
+          "type": "boolean",
+          "description": "Read status"
+        }
+      },
+      "required": ["id", "member_id", "title"]
+    }
+  },
+  "firestore": {
+    "/admins/{adminId}": {
+      "schema": "Admin",
+      "description": "System admin documents verifying administrative rights"
+    },
+    "/settings/{settingId}": {
+      "schema": "SystemSettings",
+      "description": "Global application configuration documents"
+    },
+    "/members/{memberId}": {
+      "schema": "Member",
+      "description": "Registered member profiles"
+    },
+    "/monthly_deposits/{depositId}": {
+      "schema": "MonthlyDeposit",
+      "description": "Monthly deposit receipts"
+    },
+    "/lumpsum_deposits/{lumpsumId}": {
+      "schema": "LumpsumDeposit",
+      "description": "One-time lump sum deposit records"
+    },
+    "/lands/{landId}": {
+      "schema": "LandInvestment",
+      "description": "Land acquisition projects"
+    },
+    "/notifications/{notifId}": {
+      "schema": "AppNotification",
+      "description": "Notification records for members"
+    }
+  }
+}
