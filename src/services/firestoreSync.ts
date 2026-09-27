@@ -4,15 +4,13 @@ import {
   getDoc,
   collection,
   getDocs,
+  onSnapshot,
   query,
-  limit,
 } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import type { SystemSettings, Member, MonthlyDeposit, LumpsumDeposit, LandInvestment } from '../types';
 
-/**
- * Sync system settings to Firestore
- */
+// --- পুরানো Sync ফাংশনগুলো থাকবে ---
 export async function syncSettingsToFirestore(settings: SystemSettings) {
   const path = 'settings/main';
   try {
@@ -22,9 +20,6 @@ export async function syncSettingsToFirestore(settings: SystemSettings) {
   }
 }
 
-/**
- * Fetch system settings from Firestore
- */
 export async function fetchSettingsFromFirestore(): Promise<SystemSettings | null> {
   const path = 'settings/main';
   try {
@@ -34,43 +29,62 @@ export async function fetchSettingsFromFirestore(): Promise<SystemSettings | nul
     }
     return null;
   } catch (error) {
-    console.warn('Could not read settings from Firestore:', error);
     return null;
   }
 }
 
-/**
- * Sync member document to Firestore
- */
 export async function syncMemberToFirestore(member: Member) {
-  const path = `members/${member.member_id}`;
-  try {
-    await setDoc(doc(db, 'members', member.member_id), member, { merge: true });
-  } catch (error) {
-    handleFirestoreError(error, OperationType.WRITE, path);
-  }
+  await setDoc(doc(db, 'members', member.member_id), member, { merge: true });
 }
-
-/**
- * Sync monthly deposit to Firestore
- */
 export async function syncMonthlyDepositToFirestore(deposit: MonthlyDeposit) {
-  const path = `monthly_deposits/${deposit.deposit_id}`;
+  await setDoc(doc(db, 'monthly_deposits', deposit.deposit_id), deposit, { merge: true });
+}
+export async function syncLumpsumDepositToFirestore(deposit: LumpsumDeposit) {
+  await setDoc(doc(db, 'lumpsum_deposits', deposit.lumpsum_id), deposit, { merge: true });
+}
+
+// --- নতুন ২ টা কাজের Real-time ফাংশন ---
+
+// ১. Admin Settings আপডেট করলে সবার মোবাইলে Auto আসবে
+export function subscribeToSettings(callback: (settings: SystemSettings) => void) {
+  return onSnapshot(doc(db, 'settings', 'main'), (snap) => {
+    if (snap.exists()) {
+      callback(snap.data() as SystemSettings);
+    }
+  });
+}
+
+// ২. Admin Member/Deposit আপডেট করলে সবার মোবাইলে Auto আসবে
+export function subscribeToMembers(callback: (members: Member[]) => void) {
+  const q = query(collection(db, 'members'));
+  return onSnapshot(q, (snapshot) => {
+    const members = snapshot.docs.map(d => d.data() as Member);
+    callback(members);
+  });
+}
+
+export function subscribeToMonthlyDeposits(callback: (data: MonthlyDeposit[]) => void) {
+  return onSnapshot(collection(db, 'monthly_deposits'), (snapshot) => {
+    callback(snapshot.docs.map(d => d.data() as MonthlyDeposit));
+  });
+}
+// Refresh করলে সব Member Firestore থেকে আনবে
+export async function fetchAllMembersFromFirestore(): Promise<Member[]> {
   try {
-    await setDoc(doc(db, 'monthly_deposits', deposit.deposit_id), deposit, { merge: true });
+    const snap = await getDocs(collection(db, 'members'));
+    return snap.docs.map(d => d.data() as Member);
   } catch (error) {
-    handleFirestoreError(error, OperationType.WRITE, path);
+    console.warn('Could not read members:', error);
+    return [];
   }
 }
 
-/**
- * Sync lumpsum deposit to Firestore
- */
-export async function syncLumpsumDepositToFirestore(deposit: LumpsumDeposit) {
-  const path = `lumpsum_deposits/${deposit.lumpsum_id}`;
+// Refresh করলে সব Monthly Deposit আনবে
+export async function fetchAllDepositsFromFirestore(): Promise<MonthlyDeposit[]> {
   try {
-    await setDoc(doc(db, 'lumpsum_deposits', deposit.lumpsum_id), deposit, { merge: true });
+    const snap = await getDocs(collection(db, 'monthly_deposits'));
+    return snap.docs.map(d => d.data() as MonthlyDeposit);
   } catch (error) {
-    handleFirestoreError(error, OperationType.WRITE, path);
+    return [];
   }
 }
