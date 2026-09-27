@@ -14,7 +14,11 @@ import firebaseConfig from '../firebase-applet-config.json';
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 
 // CRITICAL: The app will break without specifying firestoreDatabaseId
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+import { initializeFirestore } from 'firebase/firestore';
+
+// আপনার config থেকে databaseId নিবে
+const dbId = (app.options as any).firestoreDatabaseId || "(default)";
+export const db = initializeFirestore(app, {}, dbId);
 export const auth = getAuth(app);
 export const googleAuthProvider = new GoogleAuthProvider();
 
