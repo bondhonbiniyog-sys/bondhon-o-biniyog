@@ -2,23 +2,21 @@ import { initializeApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
 
+// আপনার আগের firebaseConfig এখানে থাকবে, Change করবেন না
 const firebaseConfig = {
-  apiKey: "AIzaSyB...",
+  apiKey: "YOUR_API_KEY",
   authDomain: "bondhon-o-biniyog.firebaseapp.com",
   projectId: "bondhon-o-biniyog",
   storageBucket: "bondhon-o-biniyog.appspot.com",
-  messagingSenderId: "123456789",
-  appId: "1:123456789:web:abcdef"
+  messagingSenderId: "YOUR_ID",
+  appId: "YOUR_APP_ID"
 };
 
-// আপনার যদি firebaseConfig অন্য জায়গায় থাকে তাহলে শুধু নিচের 3 লাইন রাখেন
 const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app);
 export const auth = getAuth(app);
-// ... আপনার আগের firebase config আর db export ঠিক থাকবে ...
 
-// নিচের এই 2টা লাইন একদম শেষে Add করেন - এটা না থাকলে Build Fail হবে
-
+// --- এই 2টা Missing ছিল, এটাই Fix ---
 export const handleFirestoreError = (error: any, operation?: any) => {
   console.error('Firestore Error:', operation, error);
   return error;
