@@ -1,63 +1,51 @@
-import { initializeApp, getApps, getApp } from 'firebase/app';
-import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, type User } from 'firebase/auth';
-import { getFirestore } from 'firebase/firestore';
+import React, { useState, useEffect, useCallback } from 'react';
+import { collection, getDocs } from 'firebase/firestore';
+import { db } from './firebase';
+import { Header } from './components/Header';
+import { HomePage } from './components/HomePage';
+import { Footer } from './components/Footer';
 
-// আপনার Real Project - bondhon-o-biniyog
-const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-  appId: import.meta.env.VITE_FIREBASE_APP_ID,
-};
+function App() {
+  const [settings, setSettings] = useState<any>(null);
+  const [members, setMembers] = useState<any[]>([]);
+  const [lands, setLands] = useState<any[]>([]);
+  const [directors, setDirectors] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
 
-const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
-export const db = getFirestore(app);
-export const auth = getAuth(app);
-export const googleAuthProvider = new GoogleAuthProvider();
-export { app, type User };
-
-// Google Login
-export async function signInWithGoogle() {
-  const result = await signInWithPopup(auth, googleAuthProvider);
-  return result.user;
-}
-export async function signOutFromFirebase() {
-  await signOut(auth);
-}
-
-// FIXED: এগুলো ছিল না, তাই Build Fail করছিল
-export enum OperationType {
-  CREATE = 'create',
-  UPDATE = 'update',
-  DELETE = 'delete',
-  LIST = 'list',
-  GET = 'get',
-  WRITE = 'write',
-}
-
-export interface FirestoreErrorInfo {
-  error: string;
-  operationType: OperationType;
-  path: string | null;
-  authInfo: any;
-}
-
-export function handleFirestoreError(
-  error: unknown,
-  operationType: OperationType,
-  path: string | null
-): never {
-  const errInfo = {
-    error: error instanceof Error ? error.message : String(error),
-    operationType,
-    path,
-    authInfo: {
-      userId: auth.currentUser?.uid,
-      email: auth.currentUser?.email,
-    },
+  const safeFetch = async (url: string) => {
+    try { const r = await fetch(url); if(!r.ok) return null; return await r.json(); } catch { return null; }
   };
-  console.error('Firestore Error: ', JSON.stringify(errInfo));
-  throw new Error(JSON.stringify(errInfo));
+
+  const fetchAppData = useCallback(async () => {
+    try {
+      const [sRes, mRes, lRes, dRes] = await Promise.all([
+        safeFetch('/api/settings'),
+        safeFetch('/api/members'),
+        safeFetch('/api/lands'),
+        safeFetch('/api/directors'),
+      ]);
+      if(sRes?.settings) setSettings(sRes.settings);
+      if(mRes?.members) setMembers(mRes.members);
+      else { const snap = await getDocs(collection(db, 'members')); setMembers(snap.docs.map(d=>d.data())); }
+      if(lRes?.lands) setLands(lRes.lands);
+      else { try { const snap = await getDocs(collection(db, 'lands')); setLands(snap.docs.map(d=>d.data())); } catch {} }
+      if(dRes?.directors) setDirectors(dRes.directors);
+      else { try { const snap = await getDocs(collection(db, 'board_members')); setDirectors(snap.docs.map(d=>d.data())); } catch {} }
+    } finally { setLoading(false); }
+  }, []);
+
+  useEffect(()=>{ fetchAppData(); }, [fetchAppData]);
+
+  if(loading) return <div className="min-h-screen bg-slate-900 text-white flex items-center justify-center">লোড হচ্ছে...</div>;
+
+  return (
+    <div className="min-h-screen bg-slate-50 flex flex-col">
+      <Header settings={settings} />
+      <main className="flex-grow">
+        <HomePage settings={settings} members={members} lands={lands} directors={directors} />
+      </main>
+      <Footer settings={settings} />
+    </div>
+  );
 }
+export default App;
