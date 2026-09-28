@@ -1,3 +1,37 @@
+import React, { useState, useEffect, useCallback } from 'react';
+import { collection, getDocs } from 'firebase/firestore';
+import { db } from './firebase';
+import { Member, MonthlyDeposit, LumpsumDeposit, LandInvestment, SystemSettings, DashboardStats, Director } from './types';
+import { fetchSettingsFromFirestore } from './services/firestoreSync';
+
+import Header from './components/Header';
+import HomePage from './components/HomePage';
+import AdminPanel from './components/AdminPanel';
+import Footer from './components/Footer';
+
+function App() {
+  const [currentUser, setCurrentUser] = useState<Member | null>(null);
+  const [settings, setSettings] = useState<SystemSettings | null>(null);
+  const [stats, setStats] = useState<DashboardStats | null>(null);
+  const [members, setMembers] = useState<Member[]>([]);
+  const [monthlyDeposits, setMonthlyDeposits] = useState<MonthlyDeposit[]>([]);
+  const [lumpsumDeposits, setLumpsumDeposits] = useState<LumpsumDeposit[]>([]);
+  const [lands, setLands] = useState<LandInvestment[]>([]);
+  const [directors, setDirectors] = useState<Director[]>([]);
+  const [gallery, setGallery] = useState<any[]>([]);
+  const [notifications, setNotifications] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const safeFetch = async (url: string) => {
+    try {
+      const res = await fetch(url);
+      if (!res.ok) return null;
+      return await res.json();
+    } catch {
+      return null;
+    }
+  };
+
   const fetchAppData = useCallback(async () => {
     try {
       const [
@@ -41,7 +75,6 @@
           const fbMembers = snap.docs.map(d => d.data() as Member);
           if(fbMembers.length > 0) {
             setMembers(fbMembers);
-            // Auto stats বানানো
             setStats(prev => ({
               total_amount_collected: fbMembers.reduce((s,m) => s + (m.total_paid || 0), 0),
               total_members: fbMembers.length,
@@ -49,7 +82,7 @@
               total_pending: 0,
               pending_monthly_deposits: 0,
               pending_lumpsum_deposits: 0,
-             ...(prev || {})
+            ...(prev || {})
             } as any));
           }
         } catch(e) { console.log('members fetch error', e) }
@@ -84,6 +117,13 @@
       }
 
       if (directorsRes?.success && directorsRes.directors) setDirectors(directorsRes.directors);
+      else {
+        try {
+          const snap = await getDocs(collection(db, 'board_members'));
+          setDirectors(snap.docs.map(d => d.data() as Director));
+        } catch(e) {}
+      }
+
       if (galleryRes?.success && galleryRes.gallery) setGallery(galleryRes.gallery);
       if (notifRes?.success && notifRes.notifications) setNotifications(notifRes.notifications);
 
@@ -93,4 +133,28 @@
       setLoading(false);
     }
   }, [currentUser]);
+
+  useEffect(() => {
+    fetchAppData();
+  }, [fetchAppData]);
+
+  if (loading) {
+    return <div className="min-h-screen bg-gray-900 flex items-center justify-center text-white">লোড হচ্ছে...</div>;
+  }
+
+  return (
+    <div className="min-h-screen bg-gray-50">
+      <Header currentUser={currentUser} settings={settings} />
+      <HomePage
+        settings={settings}
+        stats={stats}
+        members={members}
+        lands={lands}
+        directors={directors}
+      />
+      <Footer settings={settings} />
+    </div>
+  );
+}
+
 export default App;
