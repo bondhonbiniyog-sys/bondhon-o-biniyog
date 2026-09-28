@@ -1,24 +1,19 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
-import rawConfig from '../firebase-applet-config.json';
 
-// Only keep standard Firebase keys, ignore custom keys
+// Use your REAL project from Cloudflare Variables
 const firebaseConfig = {
-  apiKey: (rawConfig as any).apiKey,
-  authDomain: (rawConfig as any).authDomain,
-  projectId: (rawConfig as any).projectId,
-  storageBucket: (rawConfig as any).storageBucket,
-  messagingSenderId: (rawConfig as any).messagingSenderId,
-  appId: (rawConfig as any).appId,
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID,
 };
 
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
-
-// Custom Database ID from your config
-const dbId = (rawConfig as any).firestoreDatabaseId;
-export const db = dbId ? getFirestore(app, dbId) : getFirestore(app);
-
+export const db = getFirestore(app);
 export const auth = getAuth(app);
 export const googleAuthProvider = new GoogleAuthProvider();
 
