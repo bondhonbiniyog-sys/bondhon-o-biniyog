@@ -1,105 +1,77 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { collection, getDocs } from 'firebase/firestore';
 import { db } from './firebase';
+import Header from './components/Header';
+import HomePage from './components/HomePage';
+import Footer from './components/Footer';
 
 function App() {
-  const [currentUser, setCurrentUser] = useState<any>(null);
   const [settings, setSettings] = useState<any>(null);
-  const [stats, setStats] = useState<any>(null);
   const [members, setMembers] = useState<any[]>([]);
-  const [monthlyDeposits, setMonthlyDeposits] = useState<any[]>([]);
-  const [lumpsumDeposits, setLumpsumDeposits] = useState<any[]>([]);
   const [lands, setLands] = useState<any[]>([]);
   const [directors, setDirectors] = useState<any[]>([]);
-  const [gallery, setGallery] = useState<any[]>([]);
-  const [notifications, setNotifications] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   const safeFetch = async (url: string) => {
     try {
-      const res = await fetch(url);
-      if (!res.ok) return null;
-      return await res.json();
+      const r = await fetch(url);
+      if (!r.ok) return null;
+      return await r.json();
     } catch { return null; }
   };
 
   const fetchAppData = useCallback(async () => {
     try {
-      const [
-        settingsRes,
-        statsRes,
-        membersRes,
-        monthlyRes,
-        lumpsumRes,
-        landsRes,
-        directorsRes,
-        galleryRes,
-        notifRes,
-      ] = await Promise.all([
+      const [sRes, mRes, lRes, dRes] = await Promise.all([
         safeFetch('/api/settings'),
-        safeFetch('/api/stats'),
         safeFetch('/api/members'),
-        safeFetch('/api/deposits/monthly'),
-        safeFetch('/api/deposits/lumpsum'),
         safeFetch('/api/lands'),
         safeFetch('/api/directors'),
-        safeFetch('/api/gallery'),
-        safeFetch(`/api/notifications${currentUser? `?member_id=${currentUser.member_id}` : ''}`),
       ]);
 
-      if (settingsRes?.success && settingsRes.settings) setSettings(settingsRes.settings);
-      if (statsRes?.success && statsRes.stats) setStats(statsRes.stats);
-      if (membersRes?.success && membersRes.members) setMembers(membersRes.members);
+      if (sRes?.settings) setSettings(sRes.settings);
+
+      if (mRes?.members) setMembers(mRes.members);
       else {
         try {
           const snap = await getDocs(collection(db, 'members'));
-          const fbMembers = snap.docs.map(d => d.data());
-          if(fbMembers.length > 0) setMembers(fbMembers);
-        } catch(e) {}
+          setMembers(snap.docs.map(doc => doc.data()));
+        } catch {}
       }
 
-      if (monthlyRes?.success && monthlyRes.deposits) setMonthlyDeposits(monthlyRes.deposits);
+      if (lRes?.lands) setLands(lRes.lands);
       else {
         try {
-          const snap = await getDocs(collection(db, 'monthly_deposits'));
-          setMonthlyDeposits(snap.docs.map(d => d.data()));
-        } catch(e) {}
+          const snap = await getDocs(collection(db, 'lands'));
+          setLands(snap.docs.map(doc => doc.data()));
+        } catch {}
       }
 
-      if (lumpsumRes?.success && lumpsumRes.deposits) setLumpsumDeposits(lumpsumRes.deposits);
+      if (dRes?.directors) setDirectors(dRes.directors);
       else {
         try {
-          const snap = await getDocs(collection(db, 'lumpsum_deposits'));
-          setLumpsumDeposits(snap.docs.map(d => d.data()));
-        } catch(e) {}
+          const snap = await getDocs(collection(db, 'board_members'));
+          setDirectors(snap.docs.map(doc => doc.data()));
+        } catch {}
       }
-
-      if (landsRes?.success && landsRes.lands) setLands(landsRes.lands);
-      if (directorsRes?.success && directorsRes.directors) setDirectors(directorsRes.directors);
-      if (galleryRes?.success && galleryRes.gallery) setGallery(galleryRes.gallery);
-      if (notifRes?.success && notifRes.notifications) setNotifications(notifRes.notifications);
-
-    } catch (err) {
-      console.error('Error fetching app data:', err);
     } finally {
       setLoading(false);
     }
-  }, [currentUser]);
+  }, []);
 
-  useEffect(() => {
-    fetchAppData();
-  }, [fetchAppData]);
+  useEffect(() => { fetchAppData(); }, [fetchAppData]);
 
   if (loading) {
-    return <div style={{minHeight:'100vh', background:'#111', color:'white', display:'flex', alignItems:'center', justifyContent:'center'}}>লোড হচ্ছে...</div>;
+    return <div className="min-h-screen bg-[#0f172a] flex items-center justify-center text-white">লোড হচ্ছে...</div>;
   }
 
   return (
-    <div style={{minHeight:'100vh', background:'#f5f5f5', padding:'20px'}}>
-      <h1 style={{fontSize:'24px', fontWeight:'bold'}}>BONDHON O BINIYOG - ঠিক হয়ে গেছে!</h1>
-      <p>Members: {members.length}</p>
-      <p>Settings loaded: {settings? 'Yes' : 'No'}</p>
-      <button onClick={fetchAppData} style={{marginTop:'10px', padding:'10px', background:'black', color:'white'}}>Reload Data</button>
+    <div className="min-h-screen bg-slate-50 flex flex-col">
+      <Header settings={settings} />
+      <main className="flex-grow">
+        <HomePage settings={settings} members={members} lands={lands} directors={directors} />
+      </main>
+      <Footer settings={settings} />
     </div>
   );
 }
