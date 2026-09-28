@@ -13,11 +13,7 @@ function App() {
   const [loading, setLoading] = useState(true);
 
   const safeFetch = async (url: string) => {
-    try {
-      const r = await fetch(url);
-      if (!r.ok) return null;
-      return await r.json();
-    } catch { return null; }
+    try { const r = await fetch(url); if(!r.ok) return null; return await r.json(); } catch { return null; }
   };
 
   const fetchAppData = useCallback(async () => {
@@ -28,42 +24,19 @@ function App() {
         safeFetch('/api/lands'),
         safeFetch('/api/directors'),
       ]);
-
-      if (sRes?.settings) setSettings(sRes.settings);
-
-      if (mRes?.members) setMembers(mRes.members);
-      else {
-        try {
-          const snap = await getDocs(collection(db, 'members'));
-          setMembers(snap.docs.map(doc => doc.data()));
-        } catch {}
-      }
-
-      if (lRes?.lands) setLands(lRes.lands);
-      else {
-        try {
-          const snap = await getDocs(collection(db, 'lands'));
-          setLands(snap.docs.map(doc => doc.data()));
-        } catch {}
-      }
-
-      if (dRes?.directors) setDirectors(dRes.directors);
-      else {
-        try {
-          const snap = await getDocs(collection(db, 'board_members'));
-          setDirectors(snap.docs.map(doc => doc.data()));
-        } catch {}
-      }
-    } finally {
-      setLoading(false);
-    }
+      if(sRes?.settings) setSettings(sRes.settings);
+      if(mRes?.members) setMembers(mRes.members);
+      else { const snap = await getDocs(collection(db, 'members')); setMembers(snap.docs.map(d=>d.data())); }
+      if(lRes?.lands) setLands(lRes.lands);
+      else { try { const snap = await getDocs(collection(db, 'lands')); setLands(snap.docs.map(d=>d.data())); } catch {} }
+      if(dRes?.directors) setDirectors(dRes.directors);
+      else { try { const snap = await getDocs(collection(db, 'board_members')); setDirectors(snap.docs.map(d=>d.data())); } catch {} }
+    } finally { setLoading(false); }
   }, []);
 
-  useEffect(() => { fetchAppData(); }, [fetchAppData]);
+  useEffect(()=>{ fetchAppData(); }, [fetchAppData]);
 
-  if (loading) {
-    return <div className="min-h-screen bg-[#0f172a] flex items-center justify-center text-white">লোড হচ্ছে...</div>;
-  }
+  if(loading) return <div className="min-h-screen bg-slate-900 text-white flex items-center justify-center">লোড হচ্ছে...</div>;
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col">
@@ -75,5 +48,4 @@ function App() {
     </div>
   );
 }
-
 export default App;
