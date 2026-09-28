@@ -1,525 +1,161 @@
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import type {
-  Member,
-  MonthlyDeposit,
-  LumpsumDeposit,
-  LandInvestment,
-  SystemSettings,
-  DashboardStats,
-  LandSaleOffer,
-  PublicLandSubmission,
-  MemberLandProposal,
-  Director,
-} from '../types';
+import React, { useState, useEffect } from 'react';
+import type { Member, MonthlyDeposit, LumpsumDeposit, LandInvestment, SystemSettings, DashboardStats, Director } from '../types';
 import { formatTaka, toBengaliDigits } from '../utils/bengaliUtils';
-import { GoogleDriveExplorerModal } from './GoogleDriveExplorerModal';
-import { syncMemberToFirestore, syncSettingsToFirestore } from '../services/firestoreSync';
-import { doc, deleteDoc, collection, getDocs, updateDoc } from 'firebase/firestore';
 import { db } from '../firebase';
+import { doc, collection, getDocs, setDoc, deleteDoc } from 'firebase/firestore';
+import { syncMemberToFirestore, syncSettingsToFirestore } from '../services/firestoreSync';
 
 interface AdminPanelProps {
-  currentUser: Member | null;
-  stats: DashboardStats | null;
-  settings: SystemSettings | null;
-  members: Member[];
-  monthlyDeposits: MonthlyDeposit[];
-  lumpsumDeposits: LumpsumDeposit[];
-  lands: LandInvestment[];
-  directors?: Director[];
-  onRefreshData: () => void;
-  onOpenAuth: () => void;
+  currentUser: Member | null; stats: DashboardStats | null; settings: SystemSettings | null;
+  members: Member[]; monthlyDeposits: MonthlyDeposit[]; lumpsumDeposits: LumpsumDeposit[];
+  lands: LandInvestment[]; directors?: Director[]; onRefreshData: () => void; onOpenAuth: () => void;
 }
 
-export const AdminPanel: React.FC<AdminPanelProps> = ({
-  currentUser,
-  stats,
-  settings,
-  members,
-  monthlyDeposits,
-  lumpsumDeposits,
-  lands,
-  directors = [],
-  onRefreshData,
-  onOpenAuth,
-}) => {
-  const [adminTab, setAdminTab] = useState<'pending' | 'members' | 'lands' | 'directors' | 'payments' | 'ads_ticker' | 'branding_contact' | 'voucher_signature' | 'marketplace' | 'admin_security'>('pending');
-  const [offers, setOffers] = useState<LandSaleOffer[]>([]);
-  const [submissions, setSubmissions] = useState<PublicLandSubmission[]>([]);
-  const [proposals, setProposals] = useState<MemberLandProposal[]>([]);
-  const [marketSection, setMarketSection] = useState<'offers' | 'submissions' | 'proposals'>('offers');
-  const [isLoadingExtra, setIsLoadingExtra] = useState(false);
-
-  // ✅ FIXED: No /api - Direct Firestore
-  const fetchMarketplaceData = async () => {
-    try {
-      setIsLoadingExtra(true);
-      const [offersSnap, subsSnap, propsSnap] = await Promise.all([
-        getDocs(collection(db, 'buy_offers')).catch(()=>({ docs: [] } as any)),
-        getDocs(collection(db, 'land_submissions')).catch(()=>({ docs: [] } as any)),
-        getDocs(collection(db, 'member_proposals')).catch(()=>({ docs: [] } as any)),
-      ]);
-      setOffers(offersSnap.docs.map((d:any) => ({ id: d.id,...d.data() })) as any);
-      setSubmissions(subsSnap.docs.map((d:any) => ({ id: d.id,...d.data() })) as any);
-      setProposals(propsSnap.docs.map((d:any) => ({ id: d.id,...d.data() })) as any);
-
-      if (offersSnap.docs.length === 0) {
-        const alt = await getDocs(collection(db, 'marketplace_offers')).catch(()=>({ docs: [] } as any));
-        if (alt.docs.length > 0) setOffers(alt.docs.map((d:any) => ({ id: d.id,...d.data() })) as any);
-      }
-    } catch (err) {
-      console.error('Marketplace load error:', err);
-    } finally {
-      setIsLoadingExtra(false);
-    }
-  };
-
-  useEffect(() => { fetchMarketplaceData(); }, []);
+export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, stats, settings, members, monthlyDeposits, lumpsumDeposits, lands, directors=[], onRefreshData, onOpenAuth }) => {
+  const [adminTab, setAdminTab] = useState<'pending'|'members'|'lands'|'directors'|'payments'|'ads_ticker'|'branding_contact'|'voucher_signature'|'marketplace'|'admin_security'>('pending');
+  const [offers, setOffers] = useState<any[]>([]);
   const [memberSearch, setMemberSearch] = useState('');
-  const [memberStatusFilter, setMemberStatusFilter] = useState<'All' | 'Active' | 'Pending' | 'Blocked'>('All');
   const [showAddMemberModal, setShowAddMemberModal] = useState(false);
-  const [newMemberName, setNewMemberName] = useState('');
-  const [newMemberEmail, setNewMemberEmail] = useState('');
-  const [newMemberPhone, setNewMemberPhone] = useState('');
-  const [newMemberPassword, setNewMemberPassword] = useState('member123');
-  const [newMemberRole, setNewMemberRole] = useState<'Member' | 'Admin'>('Member');
-  const [newMemberStatus, setNewMemberStatus] = useState<'Active' | 'Pending' | 'Blocked'>('Active');
-  const [newMemberTarget, setNewMemberTarget] = useState(5000);
-  const [newMemberShares, setNewMemberShares] = useState(0);
-  const [newMemberAvatar, setNewMemberAvatar] = useState('');
-  const [editingMember, setEditingMember] = useState<Member | null>(null);
-  const [originalMemberId, setOriginalMemberId] = useState<string>('');
-  const [memberToChangePassword, setMemberToChangePassword] = useState<Member | null>(null);
-  const [newPasswordForMember, setNewPasswordForMember] = useState<string>('');
-  const [confirmPasswordForMember, setConfirmPasswordForMember] = useState<string>('');
-  const [memberPasswordLoading, setMemberPasswordLoading] = useState<boolean>(false);
-  const [showAdminDriveModal, setShowAdminDriveModal] = useState<boolean>(false);
-  const [adminEmail, setAdminEmail] = useState(currentUser?.email || 'admin@bob.com');
-  const [adminMemberId, setAdminMemberId] = useState(currentUser?.member_id || 'BoB-001');
-  const [adminFullName, setAdminFullName] = useState(currentUser?.full_name || 'সজিব মোল্লা (অ্যাডমিন)');
-  const [adminPhone, setAdminPhone] = useState(currentUser?.phone || '+880 1712-345678');
-  const [adminNewPassword, setAdminNewPassword] = useState('');
-  const [adminConfirmPassword, setAdminConfirmPassword] = useState('');
-  const [adminCredLoading, setAdminCredLoading] = useState(false);
-  const [adminCredMsg, setAdminCredMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
-  const [showAddLandModal, setShowAddLandModal] = useState(false);
-  const [editingLand, setEditingLand] = useState<LandInvestment | null>(null);
-  const [newLandName, setNewLandName] = useState('');
-  const [newLandLocation, setNewLandLocation] = useState('');
-  const [newLandArea, setNewLandArea] = useState('');
-  const [newLandPrice, setNewLandPrice] = useState(5000000);
-  const [newLandShares, setNewLandShares] = useState(50);
-  const [newLandSharePrice, setNewLandSharePrice] = useState(100000);
-  const [newLandMonthlyInstallment, setNewLandMonthlyInstallment] = useState(5000);
-  const [newLandImage, setNewLandImage] = useState('');
-  const [newLandDescription, setNewLandDescription] = useState('');
-  const [showAssignShareModal, setShowAssignShareModal] = useState(false);
-  const [assignLandId, setAssignLandId] = useState(lands[0]?.land_id || '');
-  const [assignMemberId, setAssignMemberId] = useState(members[0]?.member_id || '');
-  const [assignShareCount, setAssignShareCount] = useState(1);
-  const [assignCertNo, setAssignCertNo] = useState('');
-  const [directorsList, setDirectorsList] = useState<Director[]>(directors || []);
-  const [showAddDirectorModal, setShowAddDirectorModal] = useState(false);
-  const [editingDirector, setEditingDirector] = useState<Director | null>(null);
-  const [dirName, setDirName] = useState('');
-  const [dirDesignation, setDirDesignation] = useState('');
-  const [dirPhone, setDirPhone] = useState('');
-  const [dirEmail, setDirEmail] = useState('');
-  const [dirPhoto, setDirPhoto] = useState('');
-  const [dirMessage, setDirMessage] = useState('');
-  const [dirOrder, setDirOrder] = useState(1);
-  useEffect(() => { if (directors && directors.length > 0) setDirectorsList(directors); }, [directors]);
-  const [payBankName, setPayBankName] = useState(settings?.payment_bank_name || 'BRAC Bank PLC');
-  const [payBankAccountName, setPayBankAccountName] = useState(settings?.payment_bank_account_name || 'BONDHON O BINIYOG');
-  const [payBankAccountNo, setPayBankAccountNo] = useState(settings?.payment_bank_account_no || '1501-2049-88001');
-  const [payBankBranch, setPayBankBranch] = useState(settings?.payment_bank_branch || 'বসুন্ধরা শাখা');
-  const [payBankRouting, setPayBankRouting] = useState(settings?.payment_bank_routing || '060261789');
-  const [payBkashNo, setPayBkashNo] = useState(settings?.payment_bkash_no || '01712-345678');
-  const [payNagadNo, setPayNagadNo] = useState(settings?.payment_nagad_no || '01890-123456');
-  const [payRocketNo, setPayRocketNo] = useState(settings?.payment_rocket_no || '01712-345678-0');
-  const [payInstructions, setPayInstructions] = useState(settings?.payment_instructions || '');
-  const [adActive, setAdActive] = useState<boolean>(settings?.banner_ad_active?? true);
-  const [adBadge, setAdBadge] = useState(settings?.banner_ad_badge || 'বিশেষ বিজ্ঞাপন');
-  const [adText, setAdText] = useState(settings?.banner_ad_text || '');
-  const [adImage, setAdImage] = useState(settings?.banner_ad_image || '');
-  const [adValidity, setAdValidity] = useState(settings?.banner_ad_validity || '৩০ অক্টোবর ২০২৬ পর্যন্ত');
-  const [adActionText, setAdActionText] = useState(settings?.banner_ad_action_text || 'এখনই অফারটি গ্রহণ করুন');
-  const [callCtaPhone, setCallCtaPhone] = useState(settings?.call_cta_phone || settings?.contact_phone_1 || '+880 1712-345678');
-  const [callCtaText, setCallCtaText] = useState(settings?.call_cta_text || 'সরাসরি কল করুন');
-  const [callCtaTiming, setCallCtaTiming] = useState(settings?.call_cta_timing || 'সকাল ৯টা থেকে রাত ১০টা');
-  const [contactWhatsapp, setContactWhatsapp] = useState(settings?.contact_whatsapp || '+880 1712-345678');
-  const [contactAddress, setContactAddress] = useState(settings?.contact_address || 'বসুন্ধরা, ঢাকা-১২২৯');
-  const [voucherSignatureUrl, setVoucherSignatureUrl] = useState(settings?.voucher_signature_url || '');
-  const [voucherSignatoryName, setVoucherSignatoryName] = useState(settings?.voucher_signatory_name || 'সজিব মোল্লা');
-  const [voucherSignatoryTitle, setVoucherSignatoryTitle] = useState(settings?.voucher_signatory_title || 'ব্যবস্থাপনা পরিচালক');
-  const [voucherSealText, setVoucherSealText] = useState(settings?.voucher_seal_text || 'বন্ধন ও বিনিয়োগ অনুমোদিত');
-  const [cmsLogoUrl, setCmsLogoUrl] = useState(settings?.logo_url || '/bob-logo.png');
-  const [cmsProjectTitle, setCmsProjectTitle] = useState(settings?.project_title || 'বন্ধন ও বিনিয়োগ');
-  const [cmsSlogan, setCmsSlogan] = useState(settings?.slogan_bengali || 'যৌথ স্বপ্ন • নিশ্চিত ভবিষ্যৎ');
-  const [cmsHeroTitle, setCmsHeroTitle] = useState(settings?.hero_title || 'যৌথ বিনিয়োগে ভূমির মালিকানা');
-  const [cmsHeroSubtitle, setCmsHeroSubtitle] = useState(settings?.hero_subtitle || '');
-  const [cmsNotice, setCmsNotice] = useState(settings?.notice_bengali || '');
-  const [cmsTarget, setCmsTarget] = useState(settings?.target_amount || 10000000);
-  const [cmsVision, setCmsVision] = useState(settings?.project_vision || '');
-  const [cmsPhone1, setCmsPhone1] = useState(settings?.contact_phone_1 || '');
-  const [cmsPhone2, setCmsPhone2] = useState(settings?.contact_phone_2 || '');
-  const [cmsEmail, setCmsEmail] = useState(settings?.contact_email || '');
-  const [cmsLead, setCmsLead] = useState(settings?.management_lead || 'সজিব মোল্লা');
-  const [cmsLeadDesignation, setCmsLeadDesignation] = useState(settings?.management_lead_designation || 'ব্যবস্থাপনা পরিচালক');
+  const [newMemberName, setNewMemberName] = useState(''); const [newMemberEmail, setNewMemberEmail] = useState('');
+  const [newMemberPhone, setNewMemberPhone] = useState(''); const [newMemberPassword, setNewMemberPassword] = useState('member123');
+  const [newMemberRole, setNewMemberRole] = useState<'Member'|'Admin'>('Member');
+  const [newMemberStatus, setNewMemberStatus] = useState<'Active'|'Pending'|'Blocked'>('Active');
+  const [newMemberTarget, setNewMemberTarget] = useState(1000); const [newMemberAvatar, setNewMemberAvatar] = useState('');
+  const [editingMember, setEditingMember] = useState<Member|null>(null); const [editingMemberPassword, setEditingMemberPassword] = useState('');
+  const [memberToChangePassword, setMemberToChangePassword] = useState<Member|null>(null);
+  const [newPasswordForMember, setNewPasswordForMember] = useState(''); const [confirmPasswordForMember, setConfirmPasswordForMember] = useState('');
+  const [adminEmail, setAdminEmail] = useState(currentUser?.email||'admin@bob.com');
+  const [adminMemberId, setAdminMemberId] = useState(currentUser?.member_id||'BoB-001');
+  const [adminFullName, setAdminFullName] = useState(currentUser?.full_name||'সজিব মোল্লা');
+  const [adminPhone, setAdminPhone] = useState(currentUser?.phone||'+880 1712-345678');
+  const [adminNewPassword, setAdminNewPassword] = useState(''); const [adminConfirmPassword, setAdminConfirmPassword] = useState('');
+  const [showAddLandModal, setShowAddLandModal] = useState(false); const [editingLand, setEditingLand] = useState<LandInvestment|null>(null);
+  const [newLandName, setNewLandName] = useState(''); const [newLandLocation, setNewLandLocation] = useState('');
+  const [newLandArea, setNewLandArea] = useState(''); const [newLandPrice, setNewLandPrice] = useState(5000000);
+  const [newLandShares, setNewLandShares] = useState(50); const [newLandSharePrice, setNewLandSharePrice] = useState(100000);
+  const [newLandMonthly, setNewLandMonthly] = useState(5000); const [newLandImage, setNewLandImage] = useState('');
+  const [directorsList, setDirectorsList] = useState<Director[]>(directors); const [showAddDirectorModal, setShowAddDirectorModal] = useState(false);
+  const [editingDirector, setEditingDirector] = useState<Director|null>(null);
+  const [dirName, setDirName] = useState(''); const [dirDesignation, setDirDesignation] = useState('');
+  const [dirPhone, setDirPhone] = useState(''); const [dirEmail, setDirEmail] = useState('');
+  const [dirPhoto, setDirPhoto] = useState(''); const [dirMessage, setDirMessage] = useState('');
+  const [payBankName, setPayBankName] = useState(settings?.payment_bank_name||'BRAC Bank'); const [payBankAccName, setPayBankAccName] = useState(settings?.payment_bank_account_name||'BONDHON O BINIYOG');
+  const [payBankAccNo, setPayBankAccNo] = useState(settings?.payment_bank_account_no||'1501-2049-88001'); const [payBankBranch, setPayBankBranch] = useState(settings?.payment_bank_branch||'বসুন্ধরা');
+  const [payBkash, setPayBkash] = useState(settings?.payment_bkash_no||'01712-345678'); const [payNagad, setPayNagad] = useState(settings?.payment_nagad_no||'01890-123456'); const [payRocket, setPayRocket] = useState(settings?.payment_rocket_no||'01712-345678-0');
+  const [adActive, setAdActive] = useState(settings?.banner_ad_active??true); const [adBadge, setAdBadge] = useState(settings?.banner_ad_badge||'বিশেষ বিজ্ঞাপন'); const [adText, setAdText] = useState(settings?.banner_ad_text||''); const [adImage, setAdImage] = useState(settings?.banner_ad_image||''); const [adValidity, setAdValidity] = useState(settings?.banner_ad_validity||'৩০ অক্টোবর ২০২৬ পর্যন্ত'); const [adActionText, setAdActionText] = useState(settings?.banner_ad_action_text||'এখনই অফার গ্রহণ করুন');
+  const [callCtaPhone, setCallCtaPhone] = useState(settings?.call_cta_phone||'+880 1712-345678'); const [callCtaText, setCallCtaText] = useState(settings?.call_cta_text||'সরাসরি কল করুন'); const [contactWhatsapp, setContactWhatsapp] = useState(settings?.contact_whatsapp||'+880 1712-345678'); const [contactAddress, setContactAddress] = useState(settings?.contact_address||'বসুন্ধরা, ঢাকা');
+  const [voucherSignatureUrl, setVoucherSignatureUrl] = useState(settings?.voucher_signature_url||''); const [voucherSignatoryName, setVoucherSignatoryName] = useState(settings?.voucher_signatory_name||'সজিব মোল্লা'); const [voucherSignatoryTitle, setVoucherSignatoryTitle] = useState(settings?.voucher_signatory_title||'ব্যবস্থাপনা পরিচালক'); const [voucherSealText, setVoucherSealText] = useState(settings?.voucher_seal_text||'অনুমোদিত');
+  const [cmsLogoUrl, setCmsLogoUrl] = useState(settings?.logo_url||'/bob-logo.png'); const [cmsProjectTitle, setCmsProjectTitle] = useState(settings?.project_title||'বন্ধন ও বিনিয়োগ'); const [cmsSlogan, setCmsSlogan] = useState(settings?.slogan_bengali||'যৌথ স্বপ্ন • নিশ্চিত ভবিষ্যৎ'); const [cmsHeroTitle, setCmsHeroTitle] = useState(settings?.hero_title||'যৌথ বিনিয়োগে ভূমির মালিকানা'); const [cmsNotice, setCmsNotice] = useState(settings?.notice_bengali||''); const [cmsTarget, setCmsTarget] = useState(settings?.target_amount||10000000); const [cmsPhone1, setCmsPhone1] = useState(settings?.contact_phone_1||''); const [cmsEmail, setCmsEmail] = useState(settings?.contact_email||'');
+  const [actionLoading, setActionLoading] = useState(false); const [notification, setNotification] = useState<{text:string;type:'success'|'error'}|null>(null);
+  const showNotification = (text:string, type:'success'|'error'='success')=>{ setNotification({text,type}); setTimeout(()=>setNotification(null),4000); };
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>, setter:(v:string)=>void)=>{ const f=e.target.files?.[0]; if(!f) return; const r=new FileReader(); r.onloadend=()=>setter(r.result as string); r.readAsDataURL(f); };
 
-  const handleImageFileUpload = (e: React.ChangeEvent<HTMLInputElement>, setter: (val: string) => void) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    if (file.size > 5 * 1024 * 1024) { alert('ফাইলের সাইজ সর্বোচ্চ ৫ মেগাবাইট'); return; }
-    const reader = new FileReader();
-    reader.onloadend = () => { setter(reader.result as string); };
-    reader.readAsDataURL(file);
-  };
+  const fetchMarketplaceData = async()=>{ try{ const snap=await getDocs(collection(db,'buy_offers')); setOffers(snap.docs.map((d:any)=>({id:d.id,...d.data()}))); }catch{} };
+  useEffect(()=>{ fetchMarketplaceData(); if(directors.length>0) setDirectorsList(directors); },[directors]);
 
-  const [actionLoading, setActionLoading] = useState(false);
-  const [notification, setNotification] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
-  const showNotification = (text: string, type: 'success' | 'error' = 'success') => {
-    setNotification({ text, type });
-    setTimeout(() => setNotification(null), 4000);
-  };
+  if(!currentUser || currentUser.role!=='Admin') return <div className="max-w-2xl mx-auto px-4 py-20 text-center font-bengali"><h2 className="text-2xl font-bold text-white">অ্যাডমিন লগইন করুন</h2><button onClick={onOpenAuth} className="mt-4 px-6 py-2 bg-blue-600 text-white rounded-xl">Login</button></div>;
 
-  if (!currentUser || currentUser.role!== 'Admin') {
-    return (
-      <div className="max-w-2xl mx-auto px-4 py-20 text-center font-bengali">
-        <h2 className="text-2xl font-bold text-white mb-2">অ্যাডমিন প্রবেশাধিকার সংরক্ষিত</h2>
-        <button onClick={onOpenAuth} className="px-6 py-2.5 rounded-xl bg-blue-600 text-white">অ্যাডমিন লগইন করুন</button>
-      </div>
-    );
-  }
+  const pendingMonthly=monthlyDeposits.filter(d=>d.status==='Pending'); const pendingLumpsum=lumpsumDeposits.filter(d=>d.status==='Pending'); const totalPending=pendingMonthly.length+pendingLumpsum.length;
+  const handleUpdateMonthlyStatus=async(id:string,status:'Approved'|'Rejected')=>{ setActionLoading(true); try{ const dep=monthlyDeposits.find(d=>d.deposit_id===id); if(dep){ await setDoc(doc(db,'monthly_deposits',id),{...dep,status},{merge:true}); showNotification(`কিস্তি ${status} - Firebase Live!`); onRefreshData(); } }finally{ setActionLoading(false); } };
+  const handleUpdateLumpsumStatus=async(id:string,status:'Approved'|'Rejected')=>{ setActionLoading(true); try{ const dep=lumpsumDeposits.find(d=>d.lumpsum_id===id); if(dep){ await setDoc(doc(db,'lumpsum_deposits',id),{...dep,status},{merge:true}); showNotification(`এককালীন ${status}!`); onRefreshData(); } }finally{ setActionLoading(false); } };
+  const handleUpdateMemberStatus=async(id:string,s:string)=>{ setActionLoading(true); try{ const m=members.find(x=>x.member_id===id); if(m){ await syncMemberToFirestore({...m,status:s as any}); showNotification(`স্ট্যাটাস ${s}!`); onRefreshData(); } }finally{ setActionLoading(false); } };
+  const handleSaveMemberEdits=async(e:React.FormEvent)=>{ e.preventDefault(); if(!editingMember) return; setActionLoading(true); try{ const payload:any={...editingMember}; if(editingMemberPassword) payload.password=editingMemberPassword; await syncMemberToFirestore(payload); showNotification('সদস্য Update - Firebase!'); setEditingMember(null); onRefreshData(); }finally{ setActionLoading(false); } };
+  const handleCreateMember=async(e:React.FormEvent)=>{ e.preventDefault(); setActionLoading(true); try{ const newId=`BoB-${Date.now().toString().slice(-4)}`; const newM:any={ member_id:newId, full_name:newMemberName, email:newMemberEmail, phone:newMemberPhone, role:newMemberRole, status:newMemberStatus, monthly_target:Number(newMemberTarget)||1000, owned_shares:0, avatar_url:newMemberAvatar||`https://i.pravatar.cc/150?u=${newId}`, total_paid:0, grand_total_paid:0, join_date:new Date().toISOString() }; await syncMemberToFirestore(newM); showNotification('নতুন সদস্য Firebase এ যোগ!'); setShowAddMemberModal(false); setNewMemberName(''); setNewMemberEmail(''); setNewMemberPhone(''); onRefreshData(); }finally{ setActionLoading(false); } };
+  const handleDeleteMember=async(id:string,name:string)=>{ if(!confirm(`"${name}" বাতিল করবেন?`)) return; setActionLoading(true); try{ await deleteDoc(doc(db,'members',id)); showNotification(`${name} বাতিল!`); onRefreshData(); }finally{ setActionLoading(false); } };
+  const handleQuickPasswordReset=async(e:React.FormEvent)=>{ e.preventDefault(); if(!memberToChangePassword) return; if(newPasswordForMember!==confirmPasswordForMember){ showNotification('পাসওয়ার্ড মেলেনি','error'); return; } setActionLoading(true); try{ await syncMemberToFirestore({...memberToChangePassword, password:newPasswordForMember} as any); showNotification(`Password Change - ${memberToChangePassword.full_name}`); setMemberToChangePassword(null); onRefreshData(); }finally{ setActionLoading(false); } };
+  const handleCreateLand=async(e:React.FormEvent)=>{ e.preventDefault(); setActionLoading(true); try{ const landId=`LAND-${Date.now()}`; const newLand:any={ land_id:landId, land_name:newLandName, location:newLandLocation, area_size:newLandArea, purchase_price:Number(newLandPrice), total_shares:Number(newLandShares), share_price:Number(newLandSharePrice), monthly_installment:Number(newLandMonthly), sold_shares:0, images:[newLandImage||'https://images.unsplash.com/photo-1500382017468-9049fed747ef?w=800'] }; await setDoc(doc(db,'lands',landId),newLand); showNotification('নতুন জমি Firebase এ যোগ!'); setShowAddLandModal(false); onRefreshData(); }finally{ setActionLoading(false); } };
+  const handleUpdateLand=async(e:React.FormEvent)=>{ e.preventDefault(); if(!editingLand) return; setActionLoading(true); try{ await setDoc(doc(db,'lands',editingLand.land_id),editingLand as any,{merge:true}); showNotification('জমি Update - মোট দাম, শেয়ার মূল্য, অবশিষ্ট সব!'); setEditingLand(null); onRefreshData(); }finally{ setActionLoading(false); } };
+  const handleCreateDirector=async(e:React.FormEvent)=>{ e.preventDefault(); setActionLoading(true); try{ const id=`DIR-${Date.now()}`; const newDir:any={ director_id:id, name:dirName, designation:dirDesignation, phone:dirPhone, email:dirEmail, photo_url:dirPhoto||'https://i.pravatar.cc/150?u='+id, message:dirMessage, order:1 }; await setDoc(doc(db,'directors',id),newDir); showNotification('পরিচালক যোগ!'); setShowAddDirectorModal(false); onRefreshData(); }finally{ setActionLoading(false); } };
+  const handleUpdateDirector=async(e:React.FormEvent)=>{ e.preventDefault(); if(!editingDirector) return; setActionLoading(true); try{ await setDoc(doc(db,'directors',editingDirector.director_id),editingDirector as any,{merge:true}); showNotification('পরিচালক Update!'); setEditingDirector(null); onRefreshData(); }finally{ setActionLoading(false); } };
+  const handleDeleteDirector=async(id:string)=>{ if(!confirm('মুছে ফেলবেন?')) return; setActionLoading(true); try{ await deleteDoc(doc(db,'directors',id)); showNotification('মুছে ফেলা হয়েছে!'); onRefreshData(); }finally{ setActionLoading(false); } };
+  const handleSaveSettings=async(msg?:string, payload?:any)=>{ setActionLoading(true); try{ const data=payload||{ logo_url:cmsLogoUrl, project_title:cmsProjectTitle, slogan_bengali:cmsSlogan, hero_title:cmsHeroTitle, notice_bengali:cmsNotice, target_amount:Number(cmsTarget), contact_phone_1:cmsPhone1, contact_email:cmsEmail, call_cta_phone:callCtaPhone, call_cta_text:callCtaText, contact_whatsapp:contactWhatsapp, contact_address:contactAddress, banner_ad_active:adActive, banner_ad_badge:adBadge, banner_ad_text:adText, banner_ad_image:adImage, banner_ad_validity:adValidity, banner_ad_action_text:adActionText, payment_bank_name:payBankName, payment_bank_account_name:payBankAccName, payment_bank_account_no:payBankAccNo, payment_bank_branch:payBankBranch, payment_bkash_no:payBkash, payment_nagad_no:payNagad, payment_rocket_no:payRocket, voucher_signature_url:voucherSignatureUrl, voucher_signatory_name:voucherSignatoryName, voucher_signatory_title:voucherSignatoryTitle, voucher_seal_text:voucherSealText }; await syncSettingsToFirestore(data as any); showNotification(msg||'Firebase এ Save হয়েছে!'); onRefreshData(); }finally{ setActionLoading(false); } };
 
-  const pendingMonthly = monthlyDeposits.filter((d) => d.status === 'Pending');
-  const pendingLumpsum = lumpsumDeposits.filter((d) => d.status === 'Pending');
-  const totalPendingCount = pendingMonthly.length + pendingLumpsum.length;
-
-  const handleUpdateMonthlyStatus = async (depositId: string, status: 'Approved' | 'Rejected') => {
-    setActionLoading(true);
-    try {
-      const dep = monthlyDeposits.find(d => d.deposit_id === depositId);
-      if(dep){
-        const { doc, setDoc } = await import('firebase/firestore');
-        await setDoc(doc(db, 'monthly_deposits', depositId), {...dep, status }, { merge: true });
-        showNotification(`মাসিক কিস্তি ${status} হয়েছে! Firebase এ গেছে!`);
-        onRefreshData();
-      }
-    } catch (err) { showNotification('স্ট্যাটাস আপডেট ব্যর্থ', 'error'); } finally { setActionLoading(false); }
-  };
-  const handleUpdateLumpsumStatus = async (lumpsumId: string, status: 'Approved' | 'Rejected') => {
-    setActionLoading(true);
-    try {
-      const dep = lumpsumDeposits.find(d => d.lumpsum_id === lumpsumId);
-      if(dep){
-        const { doc, setDoc } = await import('firebase/firestore');
-        await setDoc(doc(db, 'lumpsum_deposits', lumpsumId), {...dep, status }, { merge: true });
-        showNotification(`এককালীন বিনিয়োগ ${status} হয়েছে!`);
-        onRefreshData();
-      }
-    } catch (err) { showNotification('স্ট্যাটাস আপডেট ব্যর্থ', 'error'); } finally { setActionLoading(false); }
-  };
-
-  const handleUpdateMemberStatus = async (memberId: string, newStatus: string) => {
-    setActionLoading(true);
-    try {
-      const member = members.find(m => m.member_id === memberId);
-      if(member){
-        const updated = {...member, status: newStatus as any };
-        await syncMemberToFirestore(updated);
-        showNotification(`সদস্য স্ট্যাটাস ${newStatus} - Firebase এ চলে গেছে!`);
-        onRefreshData();
-      }
-    } catch (err) { showNotification('আপডেট ব্যর্থ', 'error'); } finally { setActionLoading(false); }
-  };
-
-  const handleSaveMemberEdits = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!editingMember) return;
-    setActionLoading(true);
-    try {
-      await syncMemberToFirestore(editingMember);
-      showNotification('সদস্যের তথ্য Firebase এ সংরক্ষিত হয়েছে!');
-      setEditingMember(null);
-      onRefreshData();
-    } catch (err) { showNotification('আপডেট ব্যর্থ', 'error'); } finally { setActionLoading(false); }
-  };
-
-  const handleQuickPasswordReset = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!memberToChangePassword) return;
-    setMemberPasswordLoading(true);
-    try {
-      const updated = {...memberToChangePassword, password: newPasswordForMember } as any;
-      await syncMemberToFirestore(updated);
-      showNotification(`পাসওয়ার্ড Firebase এ সংরক্ষিত হয়েছে!`);
-      setMemberToChangePassword(null);
-      onRefreshData();
-    } catch (err) { showNotification('ব্যর্থ', 'error'); } finally { setMemberPasswordLoading(false); }
-  };
-
-  const handleAdminCredentialsSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setAdminCredLoading(true);
-    try {
-      const updated = {...currentUser, member_id: adminMemberId, email: adminEmail, full_name: adminFullName, phone: adminPhone } as Member;
-      await syncMemberToFirestore(updated);
-      localStorage.setItem('bob_logged_user', JSON.stringify(updated));
-      setAdminCredMsg({ type: 'success', text: 'অ্যাডমিন তথ্য Firebase এ সংরক্ষিত!' });
-      onRefreshData();
-    } catch (err) { setAdminCredMsg({ type: 'error', text: 'ত্রুটি' }); } finally { setAdminCredLoading(false); }
-  };
-
-  const handleCreateLand = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setActionLoading(true);
-    try {
-      const { doc, setDoc } = await import('firebase/firestore');
-      const landId = `LAND-${Date.now()}`;
-      const newLand = {
-        land_id: landId,
-        land_name: newLandName,
-        location: newLandLocation,
-        area_size: newLandArea,
-        purchase_price: Number(newLandPrice),
-        total_shares: Number(newLandShares),
-        share_price: Number(newLandSharePrice),
-        sold_shares: 0,
-        images: [newLandImage || 'https://images.unsplash.com/photo-1500382017468-9049fed747ef?w=800']
-      };
-      await setDoc(doc(db, 'lands', landId), newLand as any);
-      showNotification('নতুন ভূমি প্রকল্প Firebase এ যুক্ত হয়েছে!');
-      setShowAddLandModal(false);
-      onRefreshData();
-    } catch (err) { showNotification('ব্যর্থ', 'error'); } finally { setActionLoading(false); }
-  };
-
-  const handleCreateMember = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setActionLoading(true);
-    try {
-      const newId = `BoB-${String(members.length + 1).padStart(3, '0')}-${Date.now().toString().slice(-3)}`;
-      const newMember: any = {
-        member_id: newId,
-        full_name: newMemberName,
-        email: newMemberEmail,
-        phone: newMemberPhone,
-        role: newMemberRole,
-        status: newMemberStatus,
-        monthly_target: Number(newMemberTarget) || 5000,
-        owned_shares: Number(newMemberShares) || 0,
-        avatar_url: newMemberAvatar || `https://i.pravatar.cc/150?u=${newId}`,
-        total_paid: 0,
-        grand_total_paid: 0,
-        has_accepted_terms: true,
-        join_date: new Date().toISOString(),
-      };
-      await syncMemberToFirestore(newMember);
-      showNotification('নতুন সদস্য Firebase এ যুক্ত হয়েছে!');
-      setShowAddMemberModal(false);
-      setNewMemberName(''); setNewMemberEmail(''); setNewMemberPhone('');
-      onRefreshData();
-    } catch (err) { showNotification('ত্রুটি', 'error'); } finally { setActionLoading(false); }
-  };
-
-  const handleDeleteMember = async (memberId: string, memberName: string) => {
-    if (!window.confirm(`"${memberName}" কে মুছে ফেলবেন?`)) return;
-    setActionLoading(true);
-    try {
-      await deleteDoc(doc(db, 'members', memberId));
-      showNotification(`সদস্য "${memberName}" Firebase থেকে মুছে ফেলা হয়েছে!`);
-      onRefreshData();
-    } catch (err) { showNotification('মুছতে ব্যর্থ', 'error'); } finally { setActionLoading(false); }
-  };
-
-  const handleUpdateLand = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!editingLand) return;
-    setActionLoading(true);
-    try {
-      const { doc, setDoc } = await import('firebase/firestore');
-      await setDoc(doc(db, 'lands', editingLand.land_id), editingLand as any, { merge: true });
-      showNotification('ভূমি তথ্য Firebase এ আপডেট হয়েছে!');
-      setEditingLand(null);
-      onRefreshData();
-    } catch (err) { showNotification('ব্যর্থ', 'error'); } finally { setActionLoading(false); }
-  };
-
-  const handleCreateDirector = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setActionLoading(true);
-    try {
-      const { doc, setDoc } = await import('firebase/firestore');
-      const id = `DIR-${Date.now()}`;
-      const newDir = { director_id: id, name: dirName, designation: dirDesignation, phone: dirPhone, email: dirEmail, photo_url: dirPhoto, message: dirMessage, order: Number(dirOrder) };
-      await setDoc(doc(db, 'directors', id), newDir as any);
-      showNotification('পরিচালক Firebase এ যুক্ত!');
-      setShowAddDirectorModal(false);
-      onRefreshData();
-    } catch (err) { showNotification('ব্যর্থ', 'error'); } finally { setActionLoading(false); }
-  };
-
-  const handleOfferStatus = async (id: string, status: 'Approved' | 'Rejected', type: 'offers' | 'submissions' | 'proposals') => {
-    setActionLoading(true);
-    try {
-      const colName = type === 'offers'? 'buy_offers' : type === 'submissions'? 'land_submissions' : 'member_proposals';
-      await updateDoc(doc(db, colName, id), { status });
-      showNotification(`প্রস্তাব ${status} হয়েছে!`);
-      fetchMarketplaceData();
-    } catch (e) { showNotification('আপডেট ব্যর্থ', 'error'); }
-    finally { setActionLoading(false); }
-  };
-
-  const handleSaveSettingsSection = async (customPayload?: Record<string, any>, successText?: string) => {
-    setActionLoading(true);
-    try {
-      const payload = customPayload || {
-        logo_url: cmsLogoUrl, project_title: cmsProjectTitle, slogan_bengali: cmsSlogan,
-        hero_title: cmsHeroTitle, hero_subtitle: cmsHeroSubtitle, notice_bengali: cmsNotice,
-        target_amount: Number(cmsTarget), project_vision: cmsVision,
-        contact_phone_1: cmsPhone1, contact_phone_2: cmsPhone2, contact_whatsapp: contactWhatsapp,
-        contact_email: cmsEmail, contact_address: contactAddress, call_cta_phone: callCtaPhone,
-        call_cta_text: callCtaText, call_cta_timing: callCtaTiming, management_lead: cmsLead,
-        management_lead_designation: cmsLeadDesignation, banner_ad_active: adActive,
-        banner_ad_badge: adBadge, banner_ad_text: adText, banner_ad_image: adImage,
-        banner_ad_validity: adValidity, banner_ad_action_text: adActionText,
-        voucher_signature_url: voucherSignatureUrl, voucher_signatory_name: voucherSignatoryName,
-        voucher_signatory_title: voucherSignatoryTitle, voucher_seal_text: voucherSealText,
-        payment_bank_name: payBankName, payment_bank_account_name: payBankAccountName,
-        payment_bank_account_no: payBankAccountNo, payment_bank_branch: payBankBranch,
-        payment_bank_routing: payBankRouting, payment_bkash_no: payBkashNo,
-        payment_nagad_no: payNagadNo, payment_rocket_no: payRocketNo, payment_instructions: payInstructions,
-      };
-      await syncSettingsToFirestore(payload as any);
-      showNotification(successText || 'Firebase এ Settings Save হয়েছে!');
-      onRefreshData();
-    } catch (err) { showNotification('ত্রুটি', 'error'); } finally { setActionLoading(false); }
-  };
-
-  const filteredMembers = members.filter((m) => {
-    const matchesSearch = m.full_name.toLowerCase().includes(memberSearch.toLowerCase()) || m.email.toLowerCase().includes(memberSearch.toLowerCase()) || m.member_id.toLowerCase().includes(memberSearch.toLowerCase()) || m.phone.includes(memberSearch);
-    const matchesStatus = memberStatusFilter === 'All'? true : m.status === memberStatusFilter;
-    return matchesSearch && matchesStatus;
-  });
+  const filteredMembers=members.filter(m=>m.full_name.toLowerCase().includes(memberSearch.toLowerCase())||m.member_id.toLowerCase().includes(memberSearch.toLowerCase()));
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-8 space-y-8 font-bengali">
-      {notification && <div className={`p-4 rounded-2xl border text-sm ${notification.type === 'success'? 'bg-emerald-950/80 border-emerald-500/60 text-emerald-200' : 'bg-red-950/80 border-red-500/60 text-red-200'}`}>{notification.text}</div>}
-
-      <div className="bg-gradient-to-r from-slate-900 to-amber-950/50 border border-amber-500/30 rounded-3xl p-6 shadow-xl">
-        <div className="flex flex-col md:flex-row justify-between gap-4 mb-6">
-          <h1 className="text-2xl font-black text-white">অ্যাডমিন প্যানেল - Firebase Live ✅</h1>
-          <div className="flex gap-2">
-            <button onClick={async () => {
-              if(!confirm(`${members.length} জনকে Firebase এ Upload করবেন?`)) return;
-              setActionLoading(true);
-              for(const m of members){ await syncMemberToFirestore(m); }
-              setActionLoading(false);
-              showNotification(`${members.length} জন Firebase এ গেছে!`);
-              onRefreshData();
-            }} className="px-4 py-2 rounded-xl bg-amber-600 text-white font-bold text-xs animate-pulse">🔥 সব Firebase এ পাঠান ({members.length})</button>
-            <button onClick={onRefreshData} className="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 border border-slate-700 text-xs">রিফ্রেশ</button>
-          </div>
-        </div>
+      {notification && <div className={`p-4 rounded-2xl border text-sm ${notification.type==='success'?'bg-emerald-950/80 border-emerald-500/60 text-emerald-200':'bg-red-950/80 border-red-500/60 text-red-200'}`}>{notification.text}</div>}
+      <div className="bg-gradient-to-r from-slate-900 to-amber-950/50 border border-amber-500/30 rounded-3xl p-6">
+        <div className="flex justify-between gap-4 mb-6"><h1 className="text-2xl font-black text-white">A to Z অ্যাডমিন কন্ট্রোল - Firebase Live ✅</h1><div className="flex gap-2"><button onClick={async()=>{ if(!confirm(`${members.length} জন Firebase এ পাঠাবেন?`)) return; setActionLoading(true); for(const m of members){ await syncMemberToFirestore(m); } setActionLoading(false); showNotification(`${members.length} জন Firebase এ গেছে!`); onRefreshData(); }} className="px-4 py-2 rounded-xl bg-amber-600 text-white font-bold text-xs animate-pulse">🔥 সব Firebase এ পাঠান ({members.length})</button><button onClick={onRefreshData} className="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 border border-slate-700 text-xs">রিফ্রেশ</button></div></div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800"><span className="text-xs text-slate-400">মোট সদস্য</span><div className="text-xl font-black text-blue-400">{members.length} জন</div></div>
-          <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800"><span className="text-xs text-slate-400">পেন্ডিং ভাউচার</span><div className="text-xl font-black text-amber-400">{totalPendingCount} টি</div></div>
-          <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800"><span className="text-xs text-slate-400">ভূমি প্রকল্প</span><div className="text-xl font-black text-emerald-400">{lands.length} টি</div></div>
-          <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800"><span className="text-xs text-slate-400">ক্রয় প্রস্তাব</span><div className="text-xl font-black text-purple-400">{offers.length} টি</div></div>
+          <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800"><span className="text-xs text-slate-400">মোট সদস্য</span><div className="text-xl font-black text-blue-400">{toBengaliDigits(members.length)} জন</div></div>
+          <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800"><span className="text-xs text-slate-400">পেন্ডিং</span><div className="text-xl font-black text-amber-400">{toBengaliDigits(totalPending)} টি</div></div>
+          <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800"><span className="text-xs text-slate-400">জমি</span><div className="text-xl font-black text-emerald-400">{toBengaliDigits(lands.length)} টি</div></div>
+          <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800"><span className="text-xs text-slate-400">অফার</span><div className="text-xl font-black text-purple-400">{toBengaliDigits(offers.length)} টি</div></div>
         </div>
       </div>
 
       <div className="flex flex-wrap gap-2 border-b border-slate-800 pb-3">
-        <button onClick={() => setAdminTab('pending')} className={`px-3 py-2 rounded-xl text-xs font-bold ${adminTab === 'pending'? 'bg-amber-600 text-white' : 'bg-slate-900 text-slate-400 border border-slate-800'}`}>ভাউচার ({totalPendingCount})</button>
-        <button onClick={() => setAdminTab('members')} className={`px-3 py-2 rounded-xl text-xs font-bold ${adminTab === 'members'? 'bg-blue-600 text-white' : 'bg-slate-900 text-slate-400 border border-slate-800'}`}>সদস্য ({members.length})</button>
-        <button onClick={() => setAdminTab('lands')} className={`px-3 py-2 rounded-xl text-xs font-bold ${adminTab === 'lands'? 'bg-emerald-600 text-white' : 'bg-slate-900 text-slate-400 border border-slate-800'}`}>ভূমি</button>
-        <button onClick={() => { setAdminTab('marketplace'); fetchMarketplaceData(); }} className={`px-3 py-2 rounded-xl text-xs font-bold ${adminTab === 'marketplace'? 'bg-purple-600 text-white' : 'bg-slate-900 text-slate-400 border border-slate-800'}`}>ক্রয়-বিক্রয় প্রস্তাব ({offers.length})</button>
-        <button onClick={() => setAdminTab('payments')} className={`px-3 py-2 rounded-xl text-xs font-bold ${adminTab === 'payments'? 'bg-teal-600 text-white' : 'bg-slate-900 text-slate-400 border border-slate-800'}`}>পেমেন্ট</button>
-        <button onClick={() => setAdminTab('ads_ticker')} className={`px-3 py-2 rounded-xl text-xs font-bold ${adminTab === 'ads_ticker'? 'bg-amber-500 text-slate-950' : 'bg-slate-900 text-slate-400 border border-slate-800'}`}>বিজ্ঞাপন</button>
-        <button onClick={() => setAdminTab('branding_contact')} className={`px-3 py-2 rounded-xl text-xs font-bold ${adminTab === 'branding_contact'? 'bg-indigo-600 text-white' : 'bg-slate-900 text-slate-400 border border-slate-800'}`}>লগো ও কল</button>
-        <button onClick={() => setAdminTab('admin_security')} className={`px-3 py-2 rounded-xl text-xs font-bold ${adminTab === 'admin_security'? 'bg-red-600 text-white' : 'bg-slate-900 text-slate-400 border border-slate-800'}`}>এডমিন আইডি</button>
+        <button onClick={()=>setAdminTab('pending')} className={`px-3 py-2 rounded-xl text-xs font-bold ${adminTab==='pending'?'bg-amber-600 text-white':'bg-slate-900 text-slate-400 border border-slate-800'}`}>ভাউচার ({totalPending})</button>
+        <button onClick={()=>setAdminTab('members')} className={`px-3 py-2 rounded-xl text-xs font-bold ${adminTab==='members'?'bg-blue-600 text-white':'bg-slate-900 text-slate-400 border border-slate-800'}`}>সদস্য ({members.length})</button>
+        <button onClick={()=>setAdminTab('lands')} className={`px-3 py-2 rounded-xl text-xs font-bold ${adminTab==='lands'?'bg-emerald-600 text-white':'bg-slate-900 text-slate-400 border border-slate-800'}`}>ভূমি (শেয়ার/দাম)</button>
+        <button onClick={()=>setAdminTab('directors')} className={`px-3 py-2 rounded-xl text-xs font-bold ${adminTab==='directors'?'bg-rose-600 text-white':'bg-slate-900 text-slate-400 border border-slate-800'}`}>পরিচালনা পর্ষদ</button>
+        <button onClick={()=>setAdminTab('payments')} className={`px-3 py-2 rounded-xl text-xs font-bold ${adminTab==='payments'?'bg-teal-600 text-white':'bg-slate-900 text-slate-400 border border-slate-800'}`}>পেমেন্ট</button>
+        <button onClick={()=>setAdminTab('ads_ticker')} className={`px-3 py-2 rounded-xl text-xs font-bold ${adminTab==='ads_ticker'?'bg-amber-500 text-slate-950':'bg-slate-900 text-slate-400 border border-slate-800'}`}>বিজ্ঞাপন Pic সহ</button>
+        <button onClick={()=>setAdminTab('branding_contact')} className={`px-3 py-2 rounded-xl text-xs font-bold ${adminTab==='branding_contact'?'bg-indigo-600 text-white':'bg-slate-900 text-slate-400 border border-slate-800'}`}>লগো ও কল</button>
+        <button onClick={()=>setAdminTab('voucher_signature')} className={`px-3 py-2 rounded-xl text-xs font-bold ${adminTab==='voucher_signature'?'bg-cyan-600 text-white':'bg-slate-900 text-slate-400 border border-slate-800'}`}>ভাউচার স্বাক্ষর</button>
+        <button onClick={()=>setAdminTab('marketplace')} className={`px-3 py-2 rounded-xl text-xs font-bold ${adminTab==='marketplace'?'bg-purple-600 text-white':'bg-slate-900 text-slate-400 border border-slate-800'}`}>ক্রয় প্রস্তাব</button>
+        <button onClick={()=>setAdminTab('admin_security')} className={`px-3 py-2 rounded-xl text-xs font-bold ${adminTab==='admin_security'?'bg-red-600 text-white':'bg-slate-900 text-slate-400 border border-slate-800'}`}>এডমিন আইডি/পাস</button>
       </div>
 
-      {adminTab === 'marketplace' && (
+      {adminTab==='members' && (
         <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 space-y-4">
-          <h3 className="text-lg font-bold text-white">জমি ক্রয়-বিক্রয় প্রস্তাব - Firebase Live</h3>
-          {isLoadingExtra? <div className="text-center py-10 text-slate-400">লোড হচ্ছে...</div> :
-            offers.length === 0? <div className="text-center py-10 text-slate-400">কোনো ক্রয় প্রস্তাব নেই</div> :
-            offers.map((o:any) => (
-              <div key={o.id} className="p-4 rounded-xl bg-slate-950 border border-slate-800 flex justify-between items-center">
-                <div>
-                  <div className="text-white font-bold">{o.buyer_name} - {o.land_name}</div>
-                  <div className="text-xs text-slate-400">{o.mobile} | ৳ {o.proposed_price?.toLocaleString()} | {o.status}</div>
-                </div>
-                <div className="flex gap-2">
-                  <button onClick={()=>handleOfferStatus(o.id,'Approved','offers')} className="px-3 py-1 bg-emerald-600 text-white rounded text-xs">Approve</button>
-                  <button onClick={()=>handleOfferStatus(o.id,'Rejected','offers')} className="px-3 py-1 bg-red-600/20 text-red-300 rounded text-xs">Reject</button>
-                </div>
-              </div>
-            ))
-          }
+          <div className="flex justify-between gap-4"><h3 className="text-xl font-bold text-white">সদস্য - ছবি, নাম, মোবাইল, ইমেইল, পাসওয়ার্ড সব Change</h3><div className="flex gap-2"><input value={memberSearch} onChange={e=>setMemberSearch(e.target.value)} placeholder="Search..." className="px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-xs text-white w-40"/><button onClick={()=>setShowAddMemberModal(true)} className="px-3 py-2 rounded-xl bg-blue-600 text-white font-bold text-xs">+ নতুন সদস্য</button></div></div>
+          <div className="overflow-x-auto"><table className="w-full text-left text-xs"><thead><tr className="border-b border-slate-800 text-slate-400"><th className="pb-3">ছবি ও নাম</th><th className="pb-3">মোবাইল/ইমেইল</th><th className="pb-3">স্ট্যাটাস</th><th className="pb-3 text-right">Action</th></tr></thead><tbody className="divide-y divide-slate-800/60">{filteredMembers.map(m=>(<tr key={m.member_id}><td className="py-3 flex items-center gap-2"><img src={m.avatar_url||'https://i.pravatar.cc/150?u='+m.member_id} className="w-8 h-8 rounded-full"/><div><div className="font-bold text-white">{m.full_name}</div><div className="text-blue-400 text-[11px]">{m.member_id}</div></div></td><td className="py-3"><div className="text-white">{m.phone}</div><div className="text-slate-400 text-[11px]">{m.email}</div></td><td className="py-3"><span className={`px-2 py-0.5 rounded-full text-[11px] ${m.status==='Active'?'bg-emerald-500/10 text-emerald-400':'bg-amber-500/10 text-amber-400'}`}>{m.status}</span></td><td className="py-3 text-right"><div className="flex justify-end gap-1"><button onClick={()=>setMemberToChangePassword(m)} className="px-2 py-1 rounded bg-amber-600/20 text-amber-300 text-xs border border-amber-500/30">🔑 পাসওয়ার্ড</button><button onClick={()=>setEditingMember(m)} className="p-1.5 rounded bg-slate-800 text-slate-400">✏️</button><button onClick={()=>handleDeleteMember(m.member_id,m.full_name)} className="p-1.5 rounded bg-slate-800 text-red-400">🗑️</button></div></td></tr>))}</tbody></table></div>
         </div>
       )}
 
-      {adminTab === 'members' && (
+      {adminTab==='lands' && (
+        <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 space-y-4">
+          <div className="flex justify-between"><h3 className="text-xl font-bold text-white">ভূমি - শেয়ার মূল্য, মাসিক কিস্তি, মোট দাম, অবশিষ্ট শেয়ার</h3><button onClick={()=>setShowAddLandModal(true)} className="px-3 py-2 rounded-xl bg-emerald-600 text-white font-bold text-xs">+ নতুন জমি</button></div>
+          <div className="grid md:grid-cols-2 gap-4">{lands.map(l=>(<div key={l.land_id} className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-2"><img src={l.images?.[0]} className="w-full h-32 object-cover rounded-xl"/><div className="font-bold text-white">{l.land_name}</div><div className="text-xs text-slate-400">{l.location} | {l.area_size}</div><div className="grid grid-cols-2 gap-2 text-xs"><div className="text-slate-300">মোট দাম: <span className="text-emerald-400 font-bold">{formatTaka(l.purchase_price)}</span></div><div className="text-slate-300">শেয়ার মূল্য: <span className="text-amber-400 font-bold">{formatTaka(l.share_price)}</span></div><div className="text-slate-300">মোট শেয়ার: {toBengaliDigits(l.total_shares)}</div><div className="text-slate-300">অবশিষ্ট: {toBengaliDigits(l.total_shares-l.sold_shares)}</div><div className="text-slate-300">মাসিক কিস্তি: {formatTaka((l as any).monthly_installment||5000)}</div></div><button onClick={()=>setEditingLand(l)} className="w-full mt-2 py-1.5 rounded-lg bg-slate-800 text-slate-300 text-xs border border-slate-700">✏️ সব Edit করুন (দাম, শেয়ার, কিস্তি)</button></div>))}</div>
+        </div>
+      )}
+
+      {adminTab==='directors' && (
+        <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 space-y-4">
+          <div className="flex justify-between"><h3 className="text-xl font-bold text-white">পরিচালনা পর্ষদ - ছবি, নাম, মোবাইল, ইমেইল, বাণী</h3><button onClick={()=>setShowAddDirectorModal(true)} className="px-3 py-2 rounded-xl bg-rose-600 text-white font-bold text-xs">+ পরিচালক যোগ</button></div>
+          <div className="grid md:grid-cols-3 gap-4">{directorsList.map(d=>(<div key={d.director_id} className="p-4 rounded-2xl bg-slate-950 border border-slate-800 text-center space-y-2"><img src={d.photo_url} className="w-20 h-20 rounded-full mx-auto object-cover border-2 border-rose-500/30"/><div className="font-bold text-white">{d.name}</div><div className="text-xs text-rose-300">{d.designation}</div><div className="text-[11px] text-slate-400">{d.phone} | {d.email}</div><div className="text-[11px] text-slate-300 italic">"{d.message?.slice(0,60)}..."</div><div className="flex gap-2 justify-center"><button onClick={()=>setEditingDirector(d)} className="px-2 py-1 rounded bg-slate-800 text-xs text-slate-300">Edit</button><button onClick={()=>handleDeleteDirector(d.director_id)} className="px-2 py-1 rounded bg-red-900/30 text-xs text-red-300">Delete</button></div></div>))}</div>
+        </div>
+      )}
+
+      {adminTab==='payments' && (
+        <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 space-y-4"><h3 className="text-xl font-bold text-white">অফিশিয়াল পেমেন্ট তথ্য - Admin থেকে Change</h3><div className="grid md:grid-cols-2 gap-4"><div className="space-y-1"><label className="text-xs text-slate-400">ব্যাংক নাম</label><input value={payBankName} onChange={e=>setPayBankName(e.target.value)} className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm"/></div><div className="space-y-1"><label className="text-xs text-slate-400">একাউন্ট নাম</label><input value={payBankAccName} onChange={e=>setPayBankAccName(e.target.value)} className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm"/></div><div className="space-y-1"><label className="text-xs text-slate-400">একাউন্ট নম্বর</label><input value={payBankAccNo} onChange={e=>setPayBankAccNo(e.target.value)} className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm"/></div><div className="space-y-1"><label className="text-xs text-slate-400">শাখা</label><input value={payBankBranch} onChange={e=>setPayBankBranch(e.target.value)} className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm"/></div><div className="space-y-1"><label className="text-xs text-slate-400">বিকাশ</label><input value={payBkash} onChange={e=>setPayBkash(e.target.value)} className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm"/></div><div className="space-y-1"><label className="text-xs text-slate-400">নগদ</label><input value={payNagad} onChange={e=>setPayNagad(e.target.value)} className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm"/></div><div className="space-y-1"><label className="text-xs text-slate-400">রকেট</label><input value={payRocket} onChange={e=>setPayRocket(e.target.value)} className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm"/></div></div><button onClick={()=>handleSaveSettings('পেমেন্ট তথ্য Firebase এ Save!')} className="px-6 py-2 bg-teal-600 text-white rounded-xl text-sm font-bold">Save to Firebase</button></div>
+      )}
+
+      {adminTab==='ads_ticker' && (
+        <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 space-y-4"><h3 className="text-xl font-bold text-white">বিশেষ বিজ্ঞাপন / অফার - ছবি সহ Admin থেকে</h3><div className="grid md:grid-cols-2 gap-4"><div className="space-y-1"><label className="text-xs text-slate-400">Active</label><select value={adActive?'true':'false'} onChange={e=>setAdActive(e.target.value==='true')} className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm"><option value="true">চালু</option><option value="false">বন্ধ</option></select></div><div className="space-y-1"><label className="text-xs text-slate-400">ব্যাজ</label><input value={adBadge} onChange={e=>setAdBadge(e.target.value)} className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm"/></div></div><div className="space-y-1"><label className="text-xs text-slate-400">বিজ্ঞাপন টেক্সট</label><textarea value={adText} onChange={e=>setAdText(e.target.value)} className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm h-20"/></div><div className="space-y-1"><label className="text-xs text-slate-400">বিজ্ঞাপন ছবি (Pic) Upload</label><input type="file" accept="image/*" onChange={e=>handleImageUpload(e,setAdImage)} className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm file:mr-4 file:py-1 file:px-3 file:rounded-full file:border-0 file:bg-amber-600 file:text-white file:text-xs"/>{adImage && <img src={adImage} className="w-full h-40 object-cover rounded-xl border border-slate-700 mt-2"/>}</div><div className="grid md:grid-cols-2 gap-4"><input value={adValidity} onChange={e=>setAdValidity(e.target.value)} placeholder="মেয়াদ" className="px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm"/><input value={adActionText} onChange={e=>setAdActionText(e.target.value)} placeholder="Button Text" className="px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm"/></div><div className="space-y-1"><label className="text-xs text-slate-400">বিজ্ঞপ্তি (ডান থেকে বামে যাবে)</label><textarea value={cmsNotice} onChange={e=>setCmsNotice(e.target.value)} className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm h-20"/></div><button onClick={()=>handleSaveSettings('বিজ্ঞাপন ও নোটিশ Firebase এ Save!')} className="px-6 py-2 bg-amber-500 text-slate-950 rounded-xl text-sm font-bold">ছবি সহ Save 🔥</button></div>
+      )}
+
+      {adminTab==='branding_contact' && (
+        <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 space-y-4"><h3 className="text-xl font-bold text-white">হোমপেজ লগো, ছবি, যোগাযোগ ও সরাসরি কল CTA - Admin থেকে</h3><div className="space-y-1"><label className="text-xs text-slate-400">লগো URL (সকল স্থানে একই লগো হবে - Login সহ)</label><div className="flex gap-2"><input value={cmsLogoUrl} onChange={e=>setCmsLogoUrl(e.target.value)} className="flex-1 px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm"/><input type="file" accept="image/*" onChange={e=>handleImageUpload(e,setCmsLogoUrl)} className="px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white text-xs file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:bg-indigo-600 file:text-white"/></div>{cmsLogoUrl && <img src={cmsLogoUrl} className="w-20 h-20 object-contain rounded-xl border border-slate-700 bg-white p-2 mt-2"/>}</div><div className="grid md:grid-cols-2 gap-4"><div className="space-y-1"><label className="text-xs text-slate-400">প্রজেক্ট টাইটেল</label><input value={cmsProjectTitle} onChange={e=>setCmsProjectTitle(e.target.value)} className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm"/></div><div className="space-y-1"><label className="text-xs text-slate-400">স্লোগান</label><input value={cmsSlogan} onChange={e=>setCmsSlogan(e.target.value)} className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm"/></div></div><div className="space-y-1"><label className="text-xs text-slate-400">Hero Title</label><input value={cmsHeroTitle} onChange={e=>setCmsHeroTitle(e.target.value)} className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm"/></div><div className="grid md:grid-cols-2 gap-4"><div className="space-y-1"><label className="text-xs text-slate-400">সরাসরি কল নম্বর (Call CTA)</label><input value={callCtaPhone} onChange={e=>setCallCtaPhone(e.target.value)} className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm"/></div><div className="space-y-1"><label className="text-xs text-slate-400">কল বাটন টেক্সট</label><input value={callCtaText} onChange={e=>setCallCtaText(e.target.value)} className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm"/></div><div className="space-y-1"><label className="text-xs text-slate-400">WhatsApp</label><input value={contactWhatsapp} onChange={e=>setContactWhatsapp(e.target.value)} className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm"/></div><div className="space-y-1"><label className="text-xs text-slate-400">ঠিকানা</label><input value={contactAddress} onChange={e=>setContactAddress(e.target.value)} className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm"/></div><div className="space-y-1"><label className="text-xs text-slate-400">ফোন ১</label><input value={cmsPhone1} onChange={e=>setCmsPhone1(e.target.value)} className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm"/></div><div className="space-y-1"><label className="text-xs text-slate-400">ইমেইল</label><input value={cmsEmail} onChange={e=>setCmsEmail(e.target.value)} className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm"/></div></div><button onClick={()=>handleSaveSettings('লগো, যোগাযোগ ও কল CTA Firebase এ Save!')} className="px-6 py-2 bg-indigo-600 text-white rounded-xl text-sm font-bold">Save to Firebase</button></div>
+      )}
+
+      {adminTab==='voucher_signature' && (
+        <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 space-y-4 max-w-2xl"><h3 className="text-xl font-bold text-white">ভাউচার স্বাক্ষরের ছবি - Admin থেকে Upload, ভাউচারে দেখাবে</h3><div className="space-y-1"><label className="text-xs text-slate-400">স্বাক্ষরের ছবি Upload</label><input type="file" accept="image/*" onChange={e=>handleImageUpload(e,setVoucherSignatureUrl)} className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm file:mr-4 file:py-1 file:px-3 file:rounded-full file:border-0 file:bg-cyan-600 file:text-white file:text-xs"/>{voucherSignatureUrl && <img src={voucherSignatureUrl} className="h-24 object-contain bg-white p-2 rounded-xl border border-slate-700 mt-2"/>}</div><div className="grid md:grid-cols-2 gap-4"><div className="space-y-1"><label className="text-xs text-slate-400">স্বাক্ষরকারীর নাম</label><input value={voucherSignatoryName} onChange={e=>setVoucherSignatoryName(e.target.value)} className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm"/></div><div className="space-y-1"><label className="text-xs text-slate-400">পদবী</label><input value={voucherSignatoryTitle} onChange={e=>setVoucherSignatoryTitle(e.target.value)} className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm"/></div></div><div className="space-y-1"><label className="text-xs text-slate-400">সিল টেক্সট</label><input value={voucherSealText} onChange={e=>setVoucherSealText(e.target.value)} className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm"/></div><button onClick={()=>handleSaveSettings('ভাউচার স্বাক্ষর Firebase এ Save!')} className="px-6 py-2 bg-cyan-600 text-white rounded-xl text-sm font-bold">Signature Save to Firebase</button></div>
+      )}
+
+      {adminTab==='admin_security' && (
+        <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 space-y-4 max-w-2xl"><h3 className="text-xl font-bold text-white">এডমিন ও সদস্য ইউজার আইডি / পাসওয়ার্ড পরিবর্তন - A to Z</h3><div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-3"><h4 className="text-sm font-bold text-amber-300">এডমিন আইডি পরিবর্তন</h4><input value={adminMemberId} onChange={e=>setAdminMemberId(e.target.value)} placeholder="Admin ID" className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-700 text-white text-sm"/><input value={adminEmail} onChange={e=>setAdminEmail(e.target.value)} placeholder="Admin Email" className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-700 text-white text-sm"/><input value={adminFullName} onChange={e=>setAdminFullName(e.target.value)} placeholder="Admin Name" className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-700 text-white text-sm"/><input type="password" value={adminNewPassword} onChange={e=>setAdminNewPassword(e.target.value)} placeholder="নতুন পাসওয়ার্ড (খালি রাখলে আগেরটাই থাকবে)" className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-700 text-white text-sm"/><input type="password" value={adminConfirmPassword} onChange={e=>setAdminConfirmPassword(e.target.value)} placeholder="Confirm Password" className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-700 text-white text-sm"/><button onClick={async(e)=>{ e.preventDefault(); if(adminNewPassword && adminNewPassword!==adminConfirmPassword){ showNotification('পাসওয়ার্ড মেলেনি','error'); return; } setActionLoading(true); try{ const updated:any={...currentUser, member_id:adminMemberId, email:adminEmail, full_name:adminFullName, phone:adminPhone}; if(adminNewPassword) updated.password=adminNewPassword; await syncMemberToFirestore(updated); localStorage.setItem('bob_logged_user', JSON.stringify(updated)); showNotification('এডমিন আইডি/পাসওয়ার্ড Firebase এ Save!'); onRefreshData(); }finally{ setActionLoading(false); } }} className="px-6 py-2 bg-red-600 text-white rounded-xl text-sm font-bold">এডমিন Save</button></div><div className="text-xs text-slate-400">* সদস্যদের পাসওয়ার্ড পরিবর্তন করতে "সদস্য" Tab এ গিয়ে 🔑 পাসওয়ার্ড বাটনে ক্লিক করুন</div></div>
+      )}
+
+      {adminTab==='pending' && (
         <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 space-y-6">
-          <div className="flex justify-between gap-4">
-            <h3 className="text-xl font-bold text-white">সদস্য তালিকা - Firebase Live</h3>
-            <div className="flex gap-2">
-              <input value={memberSearch} onChange={e=>setMemberSearch(e.target.value)} placeholder="Search..." className="px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-xs text-white w-40" />
-              <button onClick={()=>setShowAddMemberModal(true)} className="px-3 py-2 rounded-xl bg-blue-600 text-white font-bold text-xs">+ নতুন সদস্য</button>
-            </div>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead><tr className="border-b border-slate-800 text-slate-400"><th className="pb-3">নাম</th><th className="pb-3">স্ট্যাটাস</th><th className="pb-3 text-right">Action</th></tr></thead>
-              <tbody className="divide-y divide-slate-800/60">
-                {filteredMembers.map((m) => (
-                  <tr key={m.member_id}><td className="py-3"><div className="font-bold text-white">{m.full_name}</div><div className="text-blue-400 text-[11px]">{m.member_id}</div></td><td className="py-3"><span className={`px-2 py-0.5 rounded-full text-[11px] ${m.status==='Active'?'bg-emerald-500/10 text-emerald-400':'bg-amber-500/10 text-amber-400'}`}>{m.status}</span></td><td className="py-3 text-right"><div className="flex justify-end gap-1">{m.status==='Pending' && <button onClick={()=>handleUpdateMemberStatus(m.member_id,'Active')} className="px-2 py-1 rounded bg-emerald-600 text-white text-xs">অনুমোদন</button>}<button onClick={()=>setEditingMember(m)} className="p-1.5 rounded bg-slate-800 text-slate-400">✏️</button><button onClick={()=>handleDeleteMember(m.member_id,m.full_name)} className="p-1.5 rounded bg-slate-800 text-red-400">🗑️</button></div></td></tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <h3 className="text-lg font-bold text-white">পেন্ডিং ভাউচার - {toBengaliDigits(totalPending)} টি</h3>
+          {pendingMonthly.map(m=>(<div key={m.deposit_id} className="flex justify-between items-center p-3 bg-slate-950 rounded-xl mb-2"><div><div className="text-white font-bold">{m.member_name}</div><div className="text-xs text-slate-400">{m.month_year} - {formatTaka(m.amount)} | {m.trx_id}</div></div><div className="flex gap-2"><button onClick={()=>handleUpdateMonthlyStatus(m.deposit_id,'Approved')} className="px-3 py-1 bg-emerald-600 text-white rounded text-xs">অনুমোদন</button><button onClick={()=>handleUpdateMonthlyStatus(m.deposit_id,'Rejected')} className="px-3 py-1 bg-red-600/20 text-red-300 rounded text-xs">বাতিল</button></div></div>))}
+          {pendingLumpsum.map(l=>(<div key={l.lumpsum_id} className="flex justify-between items-center p-3 bg-slate-950 rounded-xl mb-2"><div><div className="text-white font-bold">{l.member_name}</div><div className="text-xs text-slate-400">{l.purpose} - {formatTaka(l.amount)}</div></div><div className="flex gap-2"><button onClick={()=>handleUpdateLumpsumStatus(l.lumpsum_id,'Approved')} className="px-3 py-1 bg-emerald-600 text-white rounded text-xs">অনুমোদন</button><button onClick={()=>handleUpdateLumpsumStatus(l.lumpsum_id,'Rejected')} className="px-3 py-1 bg-red-600/20 text-red-300 rounded text-xs">বাতিল</button></div></div>))}
         </div>
       )}
 
-      {adminTab === 'pending' && (
-        <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6">
-          <h3 className="text-lg font-bold text-white mb-4">পেন্ডিং কিস্তি ({pendingMonthly.length})</h3>
-          {pendingMonthly.map((m) => (
-            <div key={m.deposit_id} className="flex justify-between items-center p-3 bg-slate-950 rounded-xl mb-2">
-              <div><div className="text-white font-bold">{m.member_name}</div><div className="text-xs text-slate-400">{m.month_year} - {formatTaka(m.amount)}</div></div>
-              <div className="flex gap-2"><button onClick={()=>handleUpdateMonthlyStatus(m.deposit_id,'Approved')} className="px-3 py-1 bg-emerald-600 text-white rounded text-xs">অনুমোদন</button><button onClick={()=>handleUpdateMonthlyStatus(m.deposit_id,'Rejected')} className="px-3 py-1 bg-red-600/20 text-red-300 rounded text-xs">বাতিল</button></div>
-            </div>
-          ))}
-        </div>
-      )}
+      {adminTab==='marketplace' && (<div className="bg-slate-900 border border-slate-800 rounded-3xl p-6"><h3 className="text-lg font-bold text-white mb-4">জমি ক্রয়-বিক্রয় প্রস্তাব - সকল সদস্য নোটিফিকেশন পাবে</h3>{offers.length===0?<div className="text-center py-8 text-slate-400">কোনো প্রস্তাব নেই</div>:offers.map((o:any)=>(<div key={o.id} className="p-3 bg-slate-950 rounded-xl mb-2 flex justify-between"><div className="text-white text-sm">{o.buyer_name||o.member_name} - ৳ {o.proposed_price?.toLocaleString()}</div><span className="text-xs text-amber-400">{o.status||'Pending'}</span></div>))}</div>)}
 
-      {showAddMemberModal && (
-        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
-          <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 w-full max-w-md space-y-4">
-            <h3 className="text-lg font-bold text-white">নতুন সদস্য - Firebase</h3>
-            <input value={newMemberName} onChange={e=>setNewMemberName(e.target.value)} placeholder="নাম" className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm" />
-            <input value={newMemberEmail} onChange={e=>setNewMemberEmail(e.target.value)} placeholder="ইমেইল" className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm" />
-            <input value={newMemberPhone} onChange={e=>setNewMemberPhone(e.target.value)} placeholder="ফোন" className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm" />
-            <div className="flex gap-2"><button onClick={handleCreateMember} className="flex-1 py-2 bg-blue-600 text-white rounded-xl text-sm font-bold">যোগ করুন</button><button onClick={()=>setShowAddMemberModal(false)} className="flex-1 py-2 bg-slate-800 text-white rounded-xl text-sm">বাতিল</button></div>
-          </div>
-        </div>
-      )}
-
-      {editingMember && (
-        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
-          <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 w-full max-w-md space-y-4">
-            <h3 className="text-lg font-bold text-white">সদস্য সম্পাদনা - Firebase</h3>
-            <input value={editingMember.full_name} onChange={e=>setEditingMember({...editingMember, full_name: e.target.value})} className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm" />
-            <input value={editingMember.email} onChange={e=>setEditingMember({...editingMember, email: e.target.value})} className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm" />
-            <select value={editingMember.status} onChange={e=>setEditingMember({...editingMember, status: e.target.value as any})} className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm"><option value="Active">Active</option><option value="Pending">Pending</option><option value="Blocked">Blocked</option></select>
-            <div className="flex gap-2"><button onClick={handleSaveMemberEdits} className="flex-1 py-2 bg-emerald-600 text-white rounded-xl text-sm font-bold">Save Firebase</button><button onClick={()=>setEditingMember(null)} className="flex-1 py-2 bg-slate-800 text-white rounded-xl text-sm">বাতিল</button></div>
-          </div>
-        </div>
-      )}
-
-      <GoogleDriveExplorerModal isOpen={showAdminDriveModal} onClose={()=>setShowAdminDriveModal(false)} />
+      {showAddMemberModal && (<div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4"><div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 w-full max-w-md space-y-4 max-h-[90vh] overflow-y-auto"><h3 className="text-lg font-bold text-white">নতুন সদস্য - ছবি সহ</h3><input value={newMemberName} onChange={e=>setNewMemberName(e.target.value)} placeholder="নাম" className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm"/><input value={newMemberEmail} onChange={e=>setNewMemberEmail(e.target.value)} placeholder="ইমেইল" className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm"/><input value={newMemberPhone} onChange={e=>setNewMemberPhone(e.target.value)} placeholder="মোবাইল" className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm"/><input value={newMemberPassword} onChange={e=>setNewMemberPassword(e.target.value)} placeholder="পাসওয়ার্ড" className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm"/><div className="grid grid-cols-2 gap-2"><select value={newMemberRole} onChange={e=>setNewMemberRole(e.target.value as any)} className="px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm"><option value="Member">Member</option><option value="Admin">Admin</option></select><select value={newMemberStatus} onChange={e=>setNewMemberStatus(e.target.value as any)} className="px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm"><option value="Active">Active</option><option value="Pending">Pending</option><option value="Blocked">Blocked</option></select></div><div className="space-y-1"><label className="text-xs text-slate-400">মাসিক টার্গেট (সর্বনিম্ন ১০০০)</label><input type="number" min={1000} value={newMemberTarget} onChange={e=>setNewMemberTarget(Math.max(1000, Number(e.target.value)))} className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm"/></div><div className="space-y-1"><label className="text-xs text-slate-400">ছবি Upload</label><input type="file" accept="image/*" onChange={e=>handleImageUpload(e,setNewMemberAvatar)} className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:bg-blue-600 file:text-white"/>{newMemberAvatar && <img src={newMemberAvatar} className="w-16 h-16 rounded-full object-cover border border-slate-700 mt-2"/>}</div><div className="flex gap-2"><button onClick={handleCreateMember} className="flex-1 py-2 bg-blue-600 text-white rounded-xl text-sm font-bold">যোগ করুন</button><button onClick={()=>setShowAddMemberModal(false)} className="flex-1 py-2 bg-slate-800 text-white rounded-xl text-sm">বাতিল</button></div></div></div>)}
+      {editingMember && (<div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4"><div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 w-full max-w-md space-y-4 max-h-[90vh] overflow-y-auto"><h3 className="text-lg font-bold text-white">সদস্য Edit - ছবি, নাম, মোবাইল, ইমেইল, পাসওয়ার্ড</h3><img src={editingMember.avatar_url} className="w-20 h-20 rounded-full mx-auto object-cover border-2 border-blue-500/30"/><input type="file" accept="image/*" onChange={e=>handleImageUpload(e,(v)=>setEditingMember({...editingMember, avatar_url:v}))} className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-xs file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:bg-blue-600 file:text-white"/><input value={editingMember.full_name} onChange={e=>setEditingMember({...editingMember, full_name:e.target.value})} placeholder="নাম" className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm"/><input value={editingMember.email} onChange={e=>setEditingMember({...editingMember, email:e.target.value})} placeholder="ইমেইল" className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm"/><input value={editingMember.phone} onChange={e=>setEditingMember({...editingMember, phone:e.target.value})} placeholder="মোবাইল" className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm"/><input value={editingMemberPassword} onChange={e=>setEditingMemberPassword(e.target.value)} placeholder="নতুন পাসওয়ার্ড (খালি রাখলে আগেরটাই)" className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-amber-500/30 text-white text-sm"/><select value={editingMember.status} onChange={e=>setEditingMember({...editingMember, status:e.target.value as any})} className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm"><option value="Active">Active</option><option value="Pending">Pending</option><option value="Blocked">Blocked</option></select><div className="flex gap-2"><button onClick={handleSaveMemberEdits} className="flex-1 py-2 bg-emerald-600 text-white rounded-xl text-sm font-bold">Save Firebase</button><button onClick={()=>setEditingMember(null)} className="flex-1 py-2 bg-slate-800 text-white rounded-xl text-sm">বাতিল</button></div></div></div>)}
+      {memberToChangePassword && (<div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4"><div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 w-full max-w-sm space-y-4"><h3 className="text-lg font-bold text-white">🔑 পাসওয়ার্ড পরিবর্তন - {memberToChangePassword.full_name}</h3><input type="password" value={newPasswordForMember} onChange={e=>setNewPasswordForMember(e.target.value)} placeholder="নতুন পাসওয়ার্ড" className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm"/><input type="password" value={confirmPasswordForMember} onChange={e=>setConfirmPasswordForMember(e.target.value)} placeholder="Confirm Password" className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm"/><div className="flex gap-2"><button onClick={handleQuickPasswordReset} className="flex-1 py-2 bg-amber-600 text-white rounded-xl text-sm font-bold">পাসওয়ার্ড Save</button><button onClick={()=>setMemberToChangePassword(null)} className="flex-1 py-2 bg-slate-800 text-white rounded-xl text-sm">বাতিল</button></div></div></div>)}
+      {showAddLandModal && (<div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4"><div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 w-full max-w-md space-y-4 max-h-[90vh] overflow-y-auto"><h3 className="text-lg font-bold text-white">নতুন জমি - মোট দাম, শেয়ার, কিস্তি</h3><input value={newLandName} onChange={e=>setNewLandName(e.target.value)} placeholder="জমির নাম" className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm"/><input value={newLandLocation} onChange={e=>setNewLandLocation(e.target.value)} placeholder="লোকেশন" className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm"/><input value={newLandArea} onChange={e=>setNewLandArea(e.target.value)} placeholder="এরিয়া (যেমন: ৫ কাঠা)" className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm"/><input type="number" value={newLandPrice} onChange={e=>setNewLandPrice(Number(e.target.value))} placeholder="মোট দাম" className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm"/><div className="grid grid-cols-2 gap-2"><input type="number" value={newLandShares} onChange={e=>setNewLandShares(Number(e.target.value))} placeholder="মোট শেয়ার" className="px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm"/><input type="number" value={newLandSharePrice} onChange={e=>setNewLandSharePrice(Number(e.target.value))} placeholder="প্রতি শেয়ার মূল্য" className="px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm"/></div><input type="number" value={newLandMonthly} onChange={e=>setNewLandMonthly(Number(e.target.value))} placeholder="মাসিক কিস্তি পরিমাণ" className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm"/><input type="file" accept="image/*" onChange={e=>handleImageUpload(e,setNewLandImage)} className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:bg-emerald-600 file:text-white"/>{newLandImage && <img src={newLandImage} className="w-full h-32 object-cover rounded-xl border border-slate-700"/>}<div className="flex gap-2"><button onClick={handleCreateLand} className="flex-1 py-2 bg-emerald-600 text-white rounded-xl text-sm font-bold">যোগ করুন</button><button onClick={()=>setShowAddLandModal(false)} className="flex-1 py-2 bg-slate-800 text-white rounded-xl text-sm">বাতিল</button></div></div></div>)}
+      {editingLand && (<div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4"><div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 w-full max-w-md space-y-4 max-h-[90vh] overflow-y-auto"><h3 className="text-lg font-bold text-white">জমি Edit - মোট দাম, শেয়ার মূল্য, অবশিষ্ট, মাসিক কিস্তি</h3><input value={editingLand.land_name} onChange={e=>setEditingLand({...editingLand, land_name:e.target.value})} className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm"/><input value={editingLand.location} onChange={e=>setEditingLand({...editingLand, location:e.target.value})} className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm"/><input type="number" value={editingLand.purchase_price} onChange={e=>setEditingLand({...editingLand, purchase_price:Number(e.target.value)})} className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm" placeholder="মোট দাম"/><div className="grid grid-cols-2 gap-2"><input type="number" value={editingLand.total_shares} onChange={e=>setEditingLand({...editingLand, total_shares:Number(e.target.value)})} className="px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm" placeholder="মোট শেয়ার"/><input type="number" value={editingLand.share_price} onChange={e=>setEditingLand({...editingLand, share_price:Number(e.target.value)})} className="px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm" placeholder="প্রতি শেয়ার মূল্য"/></div><input type="number" value={editingLand.sold_shares} onChange={e=>setEditingLand({...editingLand, sold_shares:Number(e.target.value)})} className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm" placeholder="বিক্রিত শেয়ার"/><input type="number" value={(editingLand as any).monthly_installment||5000} onChange={e=>setEditingLand({...editingLand, monthly_installment:Number(e.target.value)} as any)} className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm" placeholder="মাসিক কিস্তি"/><div className="text-xs text-slate-400">অবশিষ্ট শেয়ার: {toBengaliDigits(editingLand.total_shares-editingLand.sold_shares)} টি</div><div className="flex gap-2"><button onClick={handleUpdateLand} className="flex-1 py-2 bg-emerald-600 text-white rounded-xl text-sm font-bold">Save Firebase</button><button onClick={()=>setEditingLand(null)} className="flex-1 py-2 bg-slate-800 text-white rounded-xl text-sm">বাতিল</button></div></div></div>)}
+      {showAddDirectorModal && (<div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4"><div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 w-full max-w-md space-y-4"><h3 className="text-lg font-bold text-white">পরিচালক যোগ - ছবি, নাম, মোবাইল, ইমেইল, বাণী</h3><input value={dirName} onChange={e=>setDirName(e.target.value)} placeholder="নাম" className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm"/><input value={dirDesignation} onChange={e=>setDirDesignation(e.target.value)} placeholder="পদবী" className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm"/><input value={dirPhone} onChange={e=>setDirPhone(e.target.value)} placeholder="মোবাইল" className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm"/><input value={dirEmail} onChange={e=>setDirEmail(e.target.value)} placeholder="ইমেইল" className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm"/><input type="file" accept="image/*" onChange={e=>handleImageUpload(e,setDirPhoto)} className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:bg-rose-600 file:text-white"/>{dirPhoto && <img src={dirPhoto} className="w-20 h-20 rounded-full mx-auto object-cover"/>}<textarea value={dirMessage} onChange={e=>setDirMessage(e.target.value)} placeholder="বাণী" className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm h-20"/><div className="flex gap-2"><button onClick={handleCreateDirector} className="flex-1 py-2 bg-rose-600 text-white rounded-xl text-sm font-bold">যোগ করুন</button><button onClick={()=>setShowAddDirectorModal(false)} className="flex-1 py-2 bg-slate-800 text-white rounded-xl text-sm">বাতিল</button></div></div></div>)}
+      {editingDirector && (<div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4"><div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 w-full max-w-md space-y-4"><h3 className="text-lg font-bold text-white">পরিচালক Edit</h3><img src={editingDirector.photo_url} className="w-20 h-20 rounded-full mx-auto object-cover"/><input type="file" accept="image/*" onChange={e=>handleImageUpload(e,(v)=>setEditingDirector({...editingDirector, photo_url:v}))} className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-xs"/><input value={editingDirector.name} onChange={e=>setEditingDirector({...editingDirector, name:e.target.value})} className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm"/><input value={editingDirector.designation} onChange={e=>setEditingDirector({...editingDirector, designation:e.target.value})} className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm"/><input value={editingDirector.phone} onChange={e=>setEditingDirector({...editingDirector, phone:e.target.value})} className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm"/><input value={editingDirector.email} onChange={e=>setEditingDirector({...editingDirector, email:e.target.value})} className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm"/><textarea value={editingDirector.message||''} onChange={e=>setEditingDirector({...editingDirector, message:e.target.value})} className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm h-20"/><div className="flex gap-2"><button onClick={handleUpdateDirector} className="flex-1 py-2 bg-rose-600 text-white rounded-xl text-sm font-bold">Save</button><button onClick={()=>setEditingDirector(null)} className="flex-1 py-2 bg-slate-800 text-white rounded-xl text-sm">বাতিল</button></div></div></div>)}
     </div>
   );
 };
