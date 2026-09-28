@@ -1,6 +1,6 @@
 import { initializeApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
-import { getAuth } from "firebase/auth";
+import { getAuth, GoogleAuthProvider, signInWithPopup, signOut } from "firebase/auth";
 
 // আপনার আগের firebaseConfig এখানে থাকবে, Change করবেন না
 const firebaseConfig = {
@@ -16,7 +16,16 @@ const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app);
 export const auth = getAuth(app);
 
-// --- এই 2টা Missing ছিল, এটাই Fix ---
+// --- এই 4টা Missing ছিল, এটাই Fix ---
+export const signInWithGoogle = async () => {
+  const provider = new GoogleAuthProvider();
+  return await signInWithPopup(auth, provider);
+};
+
+export const signOutFromFirebase = async () => {
+  return await signOut(auth);
+};
+
 export const handleFirestoreError = (error: any, operation?: any) => {
   console.error('Firestore Error:', operation, error);
   return error;
@@ -28,3 +37,5 @@ export enum OperationType {
   UPDATE = 'update',
   DELETE = 'delete'
 }
+
+export default app;
