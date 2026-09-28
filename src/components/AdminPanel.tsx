@@ -14,7 +14,7 @@ import type {
 import { formatTaka, toBengaliDigits } from '../utils/bengaliUtils';
 import { GoogleDriveExplorerModal } from './GoogleDriveExplorerModal';
 import { syncMemberToFirestore, syncSettingsToFirestore } from '../services/firestoreSync';
-import { doc, deleteDoc } from 'firebase/firestore';
+import { doc, deleteDoc, collection, getDocs, updateDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 
 interface AdminPanelProps {
@@ -42,29 +42,32 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   onRefreshData,
   onOpenAuth,
 }) => {
-  const [adminTab, setAdminTab] = useState<
-    'pending' | 'members' | 'lands' | 'directors' | 'payments' | 'ads_ticker' | 'branding_contact' | 'voucher_signature' | 'marketplace' | 'admin_security'
-  >('pending');
-  const [previewVoucherUrl, setPreviewVoucherUrl] = useState<string | null>(null);
+  const [adminTab, setAdminTab] = useState<'pending' | 'members' | 'lands' | 'directors' | 'payments' | 'ads_ticker' | 'branding_contact' | 'voucher_signature' | 'marketplace' | 'admin_security'>('pending');
   const [offers, setOffers] = useState<LandSaleOffer[]>([]);
   const [submissions, setSubmissions] = useState<PublicLandSubmission[]>([]);
   const [proposals, setProposals] = useState<MemberLandProposal[]>([]);
   const [marketSection, setMarketSection] = useState<'offers' | 'submissions' | 'proposals'>('offers');
   const [isLoadingExtra, setIsLoadingExtra] = useState(false);
 
+  // ✅ FIXED: No /api - Direct Firestore
   const fetchMarketplaceData = async () => {
     try {
       setIsLoadingExtra(true);
-      const [resOffers, resSubs, resProps] = await Promise.all([
-        fetch('/api/marketplace/offers').then((r) => r.json()).catch(()=>({})),
-        fetch('/api/marketplace/submissions').then((r) => r.json()).catch(()=>({})),
-        fetch('/api/member-proposals').then((r) => r.json()).catch(()=>({})),
+      const [offersSnap, subsSnap, propsSnap] = await Promise.all([
+        getDocs(collection(db, 'buy_offers')).catch(()=>({ docs: [] } as any)),
+        getDocs(collection(db, 'land_submissions')).catch(()=>({ docs: [] } as any)),
+        getDocs(collection(db, 'member_proposals')).catch(()=>({ docs: [] } as any)),
       ]);
-      if (resOffers.success) setOffers(resOffers.offers || []);
-      if (resSubs.success) setSubmissions(resSubs.submissions || []);
-      if (resProps.success) setProposals(resProps.proposals || []);
+      setOffers(offersSnap.docs.map((d:any) => ({ id: d.id,...d.data() })) as any);
+      setSubmissions(subsSnap.docs.map((d:any) => ({ id: d.id,...d.data() })) as any);
+      setProposals(propsSnap.docs.map((d:any) => ({ id: d.id,...d.data() })) as any);
+
+      if (offersSnap.docs.length === 0) {
+        const alt = await getDocs(collection(db, 'marketplace_offers')).catch(()=>({ docs: [] } as any));
+        if (alt.docs.length > 0) setOffers(alt.docs.map((d:any) => ({ id: d.id,...d.data() })) as any);
+      }
     } catch (err) {
-      console.error('Failed to load marketplace data in admin:', err);
+      console.error('Marketplace load error:', err);
     } finally {
       setIsLoadingExtra(false);
     }
@@ -85,7 +88,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const [newMemberAvatar, setNewMemberAvatar] = useState('');
   const [editingMember, setEditingMember] = useState<Member | null>(null);
   const [originalMemberId, setOriginalMemberId] = useState<string>('');
-  const [editingMemberPassword, setEditingMemberPassword] = useState<string>('');
   const [memberToChangePassword, setMemberToChangePassword] = useState<Member | null>(null);
   const [newPasswordForMember, setNewPasswordForMember] = useState<string>('');
   const [confirmPasswordForMember, setConfirmPasswordForMember] = useState<string>('');
@@ -218,7 +220,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     } catch (err) { showNotification('স্ট্যাটাস আপডেট ব্যর্থ', 'error'); } finally { setActionLoading(false); }
   };
 
-  // *** FIXED: Firebase Sync ***
   const handleUpdateMemberStatus = async (memberId: string, newStatus: string) => {
     setActionLoading(true);
     try {
@@ -240,7 +241,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       await syncMemberToFirestore(editingMember);
       showNotification('সদস্যের তথ্য Firebase এ সংরক্ষিত হয়েছে!');
       setEditingMember(null);
-      setOriginalMemberId('');
       onRefreshData();
     } catch (err) { showNotification('আপডেট ব্যর্থ', 'error'); } finally { setActionLoading(false); }
   };
@@ -292,16 +292,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       setShowAddLandModal(false);
       onRefreshData();
     } catch (err) { showNotification('ব্যর্থ', 'error'); } finally { setActionLoading(false); }
-  };
-
-  const handleAssignShare = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setActionLoading(true);
-    try {
-      showNotification('শেয়ার বরাদ্দ Firebase এ সংরক্ষিত!');
-      setShowAssignShareModal(false);
-      onRefreshData();
-    } catch (err) { showNotification('ত্রুটি', 'error'); } finally { setActionLoading(false); }
   };
 
   const handleCreateMember = async (e: React.FormEvent) => {
@@ -368,26 +358,16 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       onRefreshData();
     } catch (err) { showNotification('ব্যর্থ', 'error'); } finally { setActionLoading(false); }
   };
-  const handleUpdateDirector = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!editingDirector) return;
+
+  const handleOfferStatus = async (id: string, status: 'Approved' | 'Rejected', type: 'offers' | 'submissions' | 'proposals') => {
     setActionLoading(true);
     try {
-      const { doc, setDoc } = await import('firebase/firestore');
-      await setDoc(doc(db, 'directors', editingDirector.director_id), editingDirector as any, { merge: true });
-      showNotification('পরিচালক আপডেট হয়েছে!');
-      setEditingDirector(null);
-      onRefreshData();
-    } catch (err) { showNotification('ব্যর্থ', 'error'); } finally { setActionLoading(false); }
-  };
-  const handleDeleteDirector = async (directorId: string, name: string) => {
-    if (!window.confirm(`"${name}" মুছে ফেলবেন?`)) return;
-    setActionLoading(true);
-    try {
-      await deleteDoc(doc(db, 'directors', directorId));
-      showNotification(`"${name}" মুছে ফেলা হয়েছে!`);
-      onRefreshData();
-    } catch (err) { showNotification('ব্যর্থ', 'error'); } finally { setActionLoading(false); }
+      const colName = type === 'offers'? 'buy_offers' : type === 'submissions'? 'land_submissions' : 'member_proposals';
+      await updateDoc(doc(db, colName, id), { status });
+      showNotification(`প্রস্তাব ${status} হয়েছে!`);
+      fetchMarketplaceData();
+    } catch (e) { showNotification('আপডেট ব্যর্থ', 'error'); }
+    finally { setActionLoading(false); }
   };
 
   const handleSaveSettingsSection = async (customPayload?: Record<string, any>, successText?: string) => {
@@ -423,81 +403,79 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   });
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8 animate-fadeIn font-bengali">
-      {notification && (
-        <div className={`p-4 rounded-2xl flex items-center gap-2 border text-sm ${notification.type === 'success'? 'bg-emerald-950/80 border-emerald-500/60 text-emerald-200' : 'bg-red-950/80 border-red-500/60 text-red-200'}`}>
-          <span>{notification.text}</span>
-        </div>
-      )}
+    <div className="max-w-7xl mx-auto px-4 py-8 space-y-8 font-bengali">
+      {notification && <div className={`p-4 rounded-2xl border text-sm ${notification.type === 'success'? 'bg-emerald-950/80 border-emerald-500/60 text-emerald-200' : 'bg-red-950/80 border-red-500/60 text-red-200'}`}>{notification.text}</div>}
 
-      <div className="bg-gradient-to-r from-slate-900 via-slate-900 to-amber-950/50 border border-amber-500/30 rounded-3xl p-6 shadow-xl">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-6">
-          <h1 className="text-2xl font-black text-white">অ্যাডমিন সেন্ট্রাল কন্ট্রোল প্যানেল - Firebase Live</h1>
+      <div className="bg-gradient-to-r from-slate-900 to-amber-950/50 border border-amber-500/30 rounded-3xl p-6 shadow-xl">
+        <div className="flex flex-col md:flex-row justify-between gap-4 mb-6">
+          <h1 className="text-2xl font-black text-white">অ্যাডমিন প্যানেল - Firebase Live ✅</h1>
           <div className="flex gap-2">
             <button onClick={async () => {
               if(!confirm(`${members.length} জনকে Firebase এ Upload করবেন?`)) return;
               setActionLoading(true);
               for(const m of members){ await syncMemberToFirestore(m); }
               setActionLoading(false);
-              showNotification(`${members.length} জন Firebase এ চলে গেছে! Firebase Console Refresh দিন!`);
+              showNotification(`${members.length} জন Firebase এ গেছে!`);
               onRefreshData();
-            }} className="cursor-pointer px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs animate-pulse">
-              🔥 সব Firebase এ পাঠান ({toBengaliDigits(members.length)})
-            </button>
+            }} className="px-4 py-2 rounded-xl bg-amber-600 text-white font-bold text-xs animate-pulse">🔥 সব Firebase এ পাঠান ({members.length})</button>
             <button onClick={onRefreshData} className="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 border border-slate-700 text-xs">রিফ্রেশ</button>
           </div>
         </div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800"><span className="text-xs text-slate-400">মোট সদস্য</span><div className="text-xl font-black text-blue-400">{toBengaliDigits(members.length)} জন</div></div>
-          <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800"><span className="text-xs text-slate-400">পেন্ডিং ভাউচার</span><div className="text-xl font-black text-amber-400">{toBengaliDigits(totalPendingCount)} টি</div></div>
-          <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800"><span className="text-xs text-slate-400">ভূমি প্রকল্প</span><div className="text-xl font-black text-emerald-400">{toBengaliDigits(lands.length)} টি</div></div>
-          <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800"><span className="text-xs text-slate-400">মোট জমা</span><div className="text-xl font-black text-purple-400">{formatTaka(stats?.total_capital || 0)}</div></div>
+          <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800"><span className="text-xs text-slate-400">মোট সদস্য</span><div className="text-xl font-black text-blue-400">{members.length} জন</div></div>
+          <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800"><span className="text-xs text-slate-400">পেন্ডিং ভাউচার</span><div className="text-xl font-black text-amber-400">{totalPendingCount} টি</div></div>
+          <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800"><span className="text-xs text-slate-400">ভূমি প্রকল্প</span><div className="text-xl font-black text-emerald-400">{lands.length} টি</div></div>
+          <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800"><span className="text-xs text-slate-400">ক্রয় প্রস্তাব</span><div className="text-xl font-black text-purple-400">{offers.length} টি</div></div>
         </div>
       </div>
 
       <div className="flex flex-wrap gap-2 border-b border-slate-800 pb-3">
-        <button onClick={() => setAdminTab('pending')} className={`px-3.5 py-2.5 rounded-xl text-xs font-bold ${adminTab === 'pending'? 'bg-amber-600 text-white' : 'bg-slate-900 text-slate-400 border border-slate-800'}`}>ভাউচার যাচাই {totalPendingCount>0 && `(${totalPendingCount})`}</button>
-        <button onClick={() => setAdminTab('members')} className={`px-3.5 py-2.5 rounded-xl text-xs font-bold ${adminTab === 'members'? 'bg-blue-600 text-white' : 'bg-slate-900 text-slate-400 border border-slate-800'}`}>সদস্য ব্যবস্থাপনা ({members.length})</button>
-        <button onClick={() => setAdminTab('lands')} className={`px-3.5 py-2.5 rounded-xl text-xs font-bold ${adminTab === 'lands'? 'bg-emerald-600 text-white' : 'bg-slate-900 text-slate-400 border border-slate-800'}`}>ভূমি ও শেয়ার</button>
-        <button onClick={() => setAdminTab('directors')} className={`px-3.5 py-2.5 rounded-xl text-xs font-bold ${adminTab === 'directors'? 'bg-rose-600 text-white' : 'bg-slate-900 text-slate-400 border border-slate-800'}`}>পরিচালনা পর্ষদ</button>
-        <button onClick={() => setAdminTab('payments')} className={`px-3.5 py-2.5 rounded-xl text-xs font-bold ${adminTab === 'payments'? 'bg-teal-600 text-white' : 'bg-slate-900 text-slate-400 border border-slate-800'}`}>পেমেন্ট তথ্য</button>
-        <button onClick={() => setAdminTab('ads_ticker')} className={`px-3.5 py-2.5 rounded-xl text-xs font-bold ${adminTab === 'ads_ticker'? 'bg-amber-500 text-slate-950' : 'bg-slate-900 text-slate-400 border border-slate-800'}`}>বিজ্ঞাপন</button>
-        <button onClick={() => setAdminTab('branding_contact')} className={`px-3.5 py-2.5 rounded-xl text-xs font-bold ${adminTab === 'branding_contact'? 'bg-indigo-600 text-white' : 'bg-slate-900 text-slate-400 border border-slate-800'}`}>লগো ও কল CTA</button>
-        <button onClick={() => setAdminTab('voucher_signature')} className={`px-3.5 py-2.5 rounded-xl text-xs font-bold ${adminTab === 'voucher_signature'? 'bg-cyan-600 text-white' : 'bg-slate-900 text-slate-400 border border-slate-800'}`}>ভাউচার স্বাক্ষর</button>
-        <button onClick={() => setAdminTab('admin_security')} className={`px-3.5 py-2.5 rounded-xl text-xs font-bold ${adminTab === 'admin_security'? 'bg-red-600 text-white' : 'bg-slate-900 text-slate-400 border border-slate-800'}`}>এ্যাডমিন আইডি ও পাসওয়ার্ড</button>
-        <button onClick={() => setShowAdminDriveModal(true)} className="px-3.5 py-2.5 rounded-xl text-xs font-bold bg-slate-900 text-amber-300 border border-amber-500/40 ml-auto">গুগল ড্রাইভ</button>
+        <button onClick={() => setAdminTab('pending')} className={`px-3 py-2 rounded-xl text-xs font-bold ${adminTab === 'pending'? 'bg-amber-600 text-white' : 'bg-slate-900 text-slate-400 border border-slate-800'}`}>ভাউচার ({totalPendingCount})</button>
+        <button onClick={() => setAdminTab('members')} className={`px-3 py-2 rounded-xl text-xs font-bold ${adminTab === 'members'? 'bg-blue-600 text-white' : 'bg-slate-900 text-slate-400 border border-slate-800'}`}>সদস্য ({members.length})</button>
+        <button onClick={() => setAdminTab('lands')} className={`px-3 py-2 rounded-xl text-xs font-bold ${adminTab === 'lands'? 'bg-emerald-600 text-white' : 'bg-slate-900 text-slate-400 border border-slate-800'}`}>ভূমি</button>
+        <button onClick={() => { setAdminTab('marketplace'); fetchMarketplaceData(); }} className={`px-3 py-2 rounded-xl text-xs font-bold ${adminTab === 'marketplace'? 'bg-purple-600 text-white' : 'bg-slate-900 text-slate-400 border border-slate-800'}`}>ক্রয়-বিক্রয় প্রস্তাব ({offers.length})</button>
+        <button onClick={() => setAdminTab('payments')} className={`px-3 py-2 rounded-xl text-xs font-bold ${adminTab === 'payments'? 'bg-teal-600 text-white' : 'bg-slate-900 text-slate-400 border border-slate-800'}`}>পেমেন্ট</button>
+        <button onClick={() => setAdminTab('ads_ticker')} className={`px-3 py-2 rounded-xl text-xs font-bold ${adminTab === 'ads_ticker'? 'bg-amber-500 text-slate-950' : 'bg-slate-900 text-slate-400 border border-slate-800'}`}>বিজ্ঞাপন</button>
+        <button onClick={() => setAdminTab('branding_contact')} className={`px-3 py-2 rounded-xl text-xs font-bold ${adminTab === 'branding_contact'? 'bg-indigo-600 text-white' : 'bg-slate-900 text-slate-400 border border-slate-800'}`}>লগো ও কল</button>
+        <button onClick={() => setAdminTab('admin_security')} className={`px-3 py-2 rounded-xl text-xs font-bold ${adminTab === 'admin_security'? 'bg-red-600 text-white' : 'bg-slate-900 text-slate-400 border border-slate-800'}`}>এডমিন আইডি</button>
       </div>
 
+      {adminTab === 'marketplace' && (
+        <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 space-y-4">
+          <h3 className="text-lg font-bold text-white">জমি ক্রয়-বিক্রয় প্রস্তাব - Firebase Live</h3>
+          {isLoadingExtra? <div className="text-center py-10 text-slate-400">লোড হচ্ছে...</div> :
+            offers.length === 0? <div className="text-center py-10 text-slate-400">কোনো ক্রয় প্রস্তাব নেই</div> :
+            offers.map((o:any) => (
+              <div key={o.id} className="p-4 rounded-xl bg-slate-950 border border-slate-800 flex justify-between items-center">
+                <div>
+                  <div className="text-white font-bold">{o.buyer_name} - {o.land_name}</div>
+                  <div className="text-xs text-slate-400">{o.mobile} | ৳ {o.proposed_price?.toLocaleString()} | {o.status}</div>
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={()=>handleOfferStatus(o.id,'Approved','offers')} className="px-3 py-1 bg-emerald-600 text-white rounded text-xs">Approve</button>
+                  <button onClick={()=>handleOfferStatus(o.id,'Rejected','offers')} className="px-3 py-1 bg-red-600/20 text-red-300 rounded text-xs">Reject</button>
+                </div>
+              </div>
+            ))
+          }
+        </div>
+      )}
+
       {adminTab === 'members' && (
-        <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-xl space-y-6">
-          <div className="flex flex-col sm:flex-row justify-between gap-4">
-            <h3 className="text-xl font-bold text-white">সদস্য তালিকা ও নিয়ন্ত্রণ খতিয়ান - Firebase Live</h3>
+        <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 space-y-6">
+          <div className="flex justify-between gap-4">
+            <h3 className="text-xl font-bold text-white">সদস্য তালিকা - Firebase Live</h3>
             <div className="flex gap-2">
-              <input type="text" value={memberSearch} onChange={(e) => setMemberSearch(e.target.value)} placeholder="নাম, আইডি বা ফোন..." className="px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-xs text-white w-52" />
-              <select value={memberStatusFilter} onChange={(e: any) => setMemberStatusFilter(e.target.value)} className="px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-xs text-white">
-                <option value="All">সকল</option><option value="Active">Active</option><option value="Pending">Pending</option><option value="Blocked">Blocked</option>
-              </select>
-              <button onClick={() => setShowAddMemberModal(true)} className="px-3.5 py-2 rounded-xl bg-blue-600 text-white font-bold text-xs">নতুন সদস্য যোগ</button>
+              <input value={memberSearch} onChange={e=>setMemberSearch(e.target.value)} placeholder="Search..." className="px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-xs text-white w-40" />
+              <button onClick={()=>setShowAddMemberModal(true)} className="px-3 py-2 rounded-xl bg-blue-600 text-white font-bold text-xs">+ নতুন সদস্য</button>
             </div>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
-              <thead><tr className="border-b border-slate-800 text-slate-400"><th className="pb-3">আইডি ও নাম</th><th className="pb-3">যোগাযোগ</th><th className="pb-3">স্ট্যাটাস</th><th className="pb-3 text-right">মোট জমা</th><th className="pb-3 text-right">নিয়ন্ত্রণ</th></tr></thead>
+              <thead><tr className="border-b border-slate-800 text-slate-400"><th className="pb-3">নাম</th><th className="pb-3">স্ট্যাটাস</th><th className="pb-3 text-right">Action</th></tr></thead>
               <tbody className="divide-y divide-slate-800/60">
                 {filteredMembers.map((m) => (
-                  <tr key={m.member_id} className="hover:bg-slate-800/40">
-                    <td className="py-3"><div className="font-bold text-white">{m.full_name}</div><div className="text-blue-400 text-[11px]">{m.member_id}</div></td>
-                    <td className="py-3 text-slate-400"><div>{m.phone}</div><div className="text-[11px]">{m.email}</div></td>
-                    <td className="py-3"><span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${m.status === 'Active'? 'bg-emerald-500/10 text-emerald-400' : m.status === 'Pending'? 'bg-amber-500/10 text-amber-400' : 'bg-red-500/10 text-red-400'}`}>{m.status}</span></td>
-                    <td className="py-3 text-right font-bold text-emerald-400">{formatTaka(m.grand_total_paid || 0)}</td>
-                    <td className="py-3 text-right">
-                      <div className="flex justify-end gap-1">
-                        {m.status === 'Pending' && <button onClick={() => handleUpdateMemberStatus(m.member_id, 'Active')} className="px-2 py-1 rounded bg-emerald-600 text-white text-xs">অনুমোদন</button>}
-                        <button onClick={() => { setOriginalMemberId(m.member_id); setEditingMember(m); }} className="p-1.5 rounded bg-slate-800 text-slate-400">✏️</button>
-                        <button onClick={() => handleDeleteMember(m.member_id, m.full_name)} className="p-1.5 rounded bg-slate-800 text-red-400">🗑️</button>
-                      </div>
-                    </td>
-                  </tr>
+                  <tr key={m.member_id}><td className="py-3"><div className="font-bold text-white">{m.full_name}</div><div className="text-blue-400 text-[11px]">{m.member_id}</div></td><td className="py-3"><span className={`px-2 py-0.5 rounded-full text-[11px] ${m.status==='Active'?'bg-emerald-500/10 text-emerald-400':'bg-amber-500/10 text-amber-400'}`}>{m.status}</span></td><td className="py-3 text-right"><div className="flex justify-end gap-1">{m.status==='Pending' && <button onClick={()=>handleUpdateMemberStatus(m.member_id,'Active')} className="px-2 py-1 rounded bg-emerald-600 text-white text-xs">অনুমোদন</button>}<button onClick={()=>setEditingMember(m)} className="p-1.5 rounded bg-slate-800 text-slate-400">✏️</button><button onClick={()=>handleDeleteMember(m.member_id,m.full_name)} className="p-1.5 rounded bg-slate-800 text-red-400">🗑️</button></div></td></tr>
                 ))}
               </tbody>
             </table>
@@ -506,87 +484,37 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       )}
 
       {adminTab === 'pending' && (
-        <div className="space-y-6">
-          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6">
-            <h3 className="text-lg font-bold text-white mb-4">পেন্ডিং মাসিক কিস্তি ({pendingMonthly.length})</h3>
-            {pendingMonthly.length === 0? <div className="text-center py-8 text-slate-400">কোনো পেন্ডিং নেই</div> :
-            pendingMonthly.map((m) => (
-              <div key={m.deposit_id} className="flex justify-between items-center p-3 bg-slate-950 rounded-xl mb-2">
-                <div><div className="text-white font-bold">{m.member_name}</div><div className="text-xs text-slate-400">{m.month_year} - {formatTaka(m.amount)}</div></div>
-                <div className="flex gap-2"><button onClick={() => handleUpdateMonthlyStatus(m.deposit_id, 'Approved')} className="px-3 py-1 bg-emerald-600 text-white rounded text-xs">অনুমোদন</button><button onClick={() => handleUpdateMonthlyStatus(m.deposit_id, 'Rejected')} className="px-3 py-1 bg-red-600/20 text-red-300 rounded text-xs">বাতিল</button></div>
-              </div>
-            ))}
-          </div>
+        <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6">
+          <h3 className="text-lg font-bold text-white mb-4">পেন্ডিং কিস্তি ({pendingMonthly.length})</h3>
+          {pendingMonthly.map((m) => (
+            <div key={m.deposit_id} className="flex justify-between items-center p-3 bg-slate-950 rounded-xl mb-2">
+              <div><div className="text-white font-bold">{m.member_name}</div><div className="text-xs text-slate-400">{m.month_year} - {formatTaka(m.amount)}</div></div>
+              <div className="flex gap-2"><button onClick={()=>handleUpdateMonthlyStatus(m.deposit_id,'Approved')} className="px-3 py-1 bg-emerald-600 text-white rounded text-xs">অনুমোদন</button><button onClick={()=>handleUpdateMonthlyStatus(m.deposit_id,'Rejected')} className="px-3 py-1 bg-red-600/20 text-red-300 rounded text-xs">বাতিল</button></div>
+            </div>
+          ))}
         </div>
       )}
 
-      {/* অন্যান্য Tab গুলো আগের মতোই থাকবে - সংক্ষেপে */}
-      {adminTab === 'payments' && (
-        <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 space-y-4">
-          <h3 className="text-xl font-bold text-white">অফিশিয়াল পেমেন্ট তথ্য - Firebase Live</h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <input value={payBankName} onChange={e=>setPayBankName(e.target.value)} placeholder="ব্যাংক নাম" className="px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm" />
-            <input value={payBankAccountNo} onChange={e=>setPayBankAccountNo(e.target.value)} placeholder="অ্যাকাউন্ট নং" className="px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm" />
-            <input value={payBkashNo} onChange={e=>setPayBkashNo(e.target.value)} placeholder="বিকাশ" className="px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm" />
-            <input value={payNagadNo} onChange={e=>setPayNagadNo(e.target.value)} placeholder="নগদ" className="px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm" />
-          </div>
-          <button onClick={()=>handleSaveSettingsSection()} disabled={actionLoading} className="px-6 py-2 bg-teal-600 text-white rounded-xl text-sm font-bold">Firebase এ Save করুন</button>
-        </div>
-      )}
-
-      {adminTab === 'ads_ticker' && (
-        <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 space-y-4">
-          <h3 className="text-xl font-bold text-white">বিজ্ঞাপন ও স্ক্রল নোটিশ - Firebase Live</h3>
-          <textarea value={cmsNotice} onChange={e=>setCmsNotice(e.target.value)} placeholder="স্ক্রল নোটিশ..." className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm h-24" />
-          <input value={adText} onChange={e=>setAdText(e.target.value)} placeholder="ব্যানার টেক্সট" className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm" />
-          <button onClick={()=>handleSaveSettingsSection()} className="px-6 py-2 bg-amber-500 text-slate-950 rounded-xl text-sm font-bold">Save to Firebase</button>
-        </div>
-      )}
-
-      {adminTab === 'branding_contact' && (
-        <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 space-y-4">
-          <h3 className="text-xl font-bold text-white">লগো, যোগাযোগ ও কল CTA - Firebase Live</h3>
-          <input value={cmsLogoUrl} onChange={e=>setCmsLogoUrl(e.target.value)} placeholder="Logo URL" className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm" />
-          <input value={callCtaPhone} onChange={e=>setCallCtaPhone(e.target.value)} placeholder="কল CTA ফোন" className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm" />
-          <input value={contactAddress} onChange={e=>setContactAddress(e.target.value)} placeholder="ঠিকানা" className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm" />
-          <button onClick={()=>handleSaveSettingsSection()} className="px-6 py-2 bg-indigo-600 text-white rounded-xl text-sm font-bold">Save to Firebase</button>
-        </div>
-      )}
-
-      {adminTab === 'admin_security' && (
-        <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 space-y-4 max-w-2xl">
-          <h3 className="text-xl font-bold text-white">এ্যাডমিন আইডি ও পাসওয়ার্ড - Firebase Live</h3>
-          {adminCredMsg && <div className={`p-3 rounded-xl text-sm ${adminCredMsg.type==='success'?'bg-emerald-900/50 text-emerald-200':'bg-red-900/50 text-red-200'}`}>{adminCredMsg.text}</div>}
-          <input value={adminMemberId} onChange={e=>setAdminMemberId(e.target.value)} placeholder="Admin ID" className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm" />
-          <input value={adminEmail} onChange={e=>setAdminEmail(e.target.value)} placeholder="Admin Email" className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm" />
-          <input value={adminFullName} onChange={e=>setAdminFullName(e.target.value)} placeholder="Admin Name" className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm" />
-          <button onClick={handleAdminCredentialsSubmit} disabled={adminCredLoading} className="px-6 py-2 bg-red-600 text-white rounded-xl text-sm font-bold">Firebase এ আপডেট করুন</button>
-        </div>
-      )}
-
-      {/* Add Member Modal */}
       {showAddMemberModal && (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
           <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 w-full max-w-md space-y-4">
-            <h3 className="text-lg font-bold text-white">নতুন সদস্য যোগ - Firebase</h3>
+            <h3 className="text-lg font-bold text-white">নতুন সদস্য - Firebase</h3>
             <input value={newMemberName} onChange={e=>setNewMemberName(e.target.value)} placeholder="নাম" className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm" />
             <input value={newMemberEmail} onChange={e=>setNewMemberEmail(e.target.value)} placeholder="ইমেইল" className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm" />
             <input value={newMemberPhone} onChange={e=>setNewMemberPhone(e.target.value)} placeholder="ফোন" className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm" />
-            <div className="flex gap-2"><button onClick={handleCreateMember} className="flex-1 py-2 bg-blue-600 text-white rounded-xl text-sm font-bold">Firebase এ যোগ করুন</button><button onClick={()=>setShowAddMemberModal(false)} className="flex-1 py-2 bg-slate-800 text-white rounded-xl text-sm">বাতিল</button></div>
+            <div className="flex gap-2"><button onClick={handleCreateMember} className="flex-1 py-2 bg-blue-600 text-white rounded-xl text-sm font-bold">যোগ করুন</button><button onClick={()=>setShowAddMemberModal(false)} className="flex-1 py-2 bg-slate-800 text-white rounded-xl text-sm">বাতিল</button></div>
           </div>
         </div>
       )}
 
-      {/* Edit Member Modal */}
       {editingMember && (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
           <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 w-full max-w-md space-y-4">
-            <h3 className="text-lg font-bold text-white">সদস্য সম্পাদনা - Firebase Live</h3>
-            <input value={editingMember.full_name} onChange={e=>setEditingMember({...editingMember, full_name: e.target.value})} placeholder="নাম" className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm" />
-            <input value={editingMember.email} onChange={e=>setEditingMember({...editingMember, email: e.target.value})} placeholder="ইমেইল" className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm" />
-            <input value={editingMember.phone} onChange={e=>setEditingMember({...editingMember, phone: e.target.value})} placeholder="ফোন" className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm" />
+            <h3 className="text-lg font-bold text-white">সদস্য সম্পাদনা - Firebase</h3>
+            <input value={editingMember.full_name} onChange={e=>setEditingMember({...editingMember, full_name: e.target.value})} className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm" />
+            <input value={editingMember.email} onChange={e=>setEditingMember({...editingMember, email: e.target.value})} className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm" />
             <select value={editingMember.status} onChange={e=>setEditingMember({...editingMember, status: e.target.value as any})} className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm"><option value="Active">Active</option><option value="Pending">Pending</option><option value="Blocked">Blocked</option></select>
-            <div className="flex gap-2"><button onClick={handleSaveMemberEdits} className="flex-1 py-2 bg-emerald-600 text-white rounded-xl text-sm font-bold">Firebase এ Save</button><button onClick={()=>setEditingMember(null)} className="flex-1 py-2 bg-slate-800 text-white rounded-xl text-sm">বাতিল</button></div>
+            <div className="flex gap-2"><button onClick={handleSaveMemberEdits} className="flex-1 py-2 bg-emerald-600 text-white rounded-xl text-sm font-bold">Save Firebase</button><button onClick={()=>setEditingMember(null)} className="flex-1 py-2 bg-slate-800 text-white rounded-xl text-sm">বাতিল</button></div>
           </div>
         </div>
       )}
