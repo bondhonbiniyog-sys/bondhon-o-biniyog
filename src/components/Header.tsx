@@ -159,10 +159,10 @@ export const Header: React.FC<HeaderProps> = ({
                   </button>
                 )}
 
-                {/* Member Profile & Dashboard Button (Shows Member Name instead of generic 'ড্যাশবোর্ড') */}
+                {/* Member Profile & Dashboard Button (Shows Member Name instead of generic <>{currentUser.full_name}<') */}
                 <button
                   onClick={() => handleNavClick('dashboard')}
-                  title={`ড্যাশবোর্ড - ${currentUser.full_name}`}
+                  title={`${currentUser.full_name}`}
                   className={`cursor-pointer px-3.5 py-1.5 rounded-xl text-xs sm:text-sm font-semibold transition-all border flex items-center gap-2 max-w-[200px] lg:max-w-[240px] ${
                     currentTab === 'dashboard'
                       ? 'bg-emerald-600 text-white border-emerald-500 shadow-md shadow-emerald-600/30'
