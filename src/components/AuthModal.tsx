@@ -62,13 +62,14 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onLoginSu
   };
 
   // ✅ FIX: Register - Direct Firestore
-  const handleRegister = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setErrorMessage('');
-    if (Number(regMonthlyTarget) < 1000) {
-      setErrorMessage('মাসিক সঞ্চয় টার্গেট সর্বনিম্ন ১,০০০ টাকা হতে হবে।'); return;
-    }
-    setIsLoading(true);
+  const handleRegister = async (e) => {
+  e.preventDefault();
+  if(Number(regMonthlyTarget) < 1000){
+    alert('সর্বনিম্ন ১০০০ টাকা');
+    return;
+  }
+  setIsLoading(true);
+  // ... বাকি Code
     try {
       const newMember = {
         member_id: `BOB-${Date.now()}`,
