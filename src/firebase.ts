@@ -4,14 +4,14 @@ import { getAuth, GoogleAuthProvider, signInWithPopup, signOut } from "firebase/
 
 // আপনার আগের firebaseConfig এখানে থাকবে, Change করবেন না
 const firebaseConfig = {
-  apiKey: "YOUR_API_KEY",
+  apiKey: "AIzaSyDpwbZUfzaBPCSc4fG99646xn4PW8NkV2c",
   authDomain: "bondhon-o-biniyog.firebaseapp.com",
   projectId: "bondhon-o-biniyog",
-  storageBucket: "bondhon-o-biniyog.appspot.com",
-  messagingSenderId: "YOUR_ID",
-  appId: "YOUR_APP_ID"
+  storageBucket: "bondhon-o-biniyog.firebasestorage.app",
+  messagingSenderId: "720038346036",
+  appId: "1:720038346036:web:6ff772447b9c2887c1b961",
+  measurementId: "G-20NCYVMWJH"
 };
-
 const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app);
 export const auth = getAuth(app);
