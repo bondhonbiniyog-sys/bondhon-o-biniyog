@@ -236,3 +236,4 @@ export interface DashboardStats {
   total_member_proposals?: number;
   pending_member_proposals?: number;
 }
+
