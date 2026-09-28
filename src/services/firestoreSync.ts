@@ -1,8 +1,8 @@
-import { collection, onSnapshot, getDocs } from 'firebase/firestore';
+import { collection, onSnapshot } from 'firebase/firestore';
 import { db } from '../firebase';
 
 export const subscribeToMembers = (cb: any) => {
-  return onSnapshot(collection(db, 'members'), snap => cb(snap.docs.map(d => ({id: d.id,...d.data()}))));
+  return onSnapshot(collection(db, 'members'), snap => cb(snap.docs.map(d => ({id: d.id,...d.data() as any}))));
 };
 export const subscribeToMonthlyDeposits = (cb: any) => {
   return onSnapshot(collection(db, 'monthly_deposits'), snap => cb(snap.docs.map(d => d.data())));
@@ -15,7 +15,4 @@ export const subscribeToSettings = (cb: any) => {
     if(!snap.empty) cb(snap.docs[0].data());
   });
 };
-export const seedInitialFirestoreDataIfEmpty = async () => {
-  console.log('seed check');
-  return true;
-};
+export const seedInitialFirestoreDataIfEmpty = async () => { return true; };
