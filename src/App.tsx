@@ -93,3 +93,4 @@
       setLoading(false);
     }
   }, [currentUser]);
+export default App;
