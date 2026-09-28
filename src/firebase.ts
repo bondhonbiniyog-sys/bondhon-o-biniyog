@@ -1,51 +1,17 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { collection, getDocs } from 'firebase/firestore';
-import { db } from './firebase';
-import { Header } from './components/Header';
-import { HomePage } from './components/HomePage';
-import { Footer } from './components/Footer';
+import { initializeApp } from "firebase/app";
+import { getFirestore } from "firebase/firestore";
+import { getAuth } from "firebase/auth";
 
-function App() {
-  const [settings, setSettings] = useState<any>(null);
-  const [members, setMembers] = useState<any[]>([]);
-  const [lands, setLands] = useState<any[]>([]);
-  const [directors, setDirectors] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+const firebaseConfig = {
+  apiKey: "AIzaSyB...",
+  authDomain: "bondhon-o-biniyog.firebaseapp.com",
+  projectId: "bondhon-o-biniyog",
+  storageBucket: "bondhon-o-biniyog.appspot.com",
+  messagingSenderId: "123456789",
+  appId: "1:123456789:web:abcdef"
+};
 
-  const safeFetch = async (url: string) => {
-    try { const r = await fetch(url); if(!r.ok) return null; return await r.json(); } catch { return null; }
-  };
-
-  const fetchAppData = useCallback(async () => {
-    try {
-      const [sRes, mRes, lRes, dRes] = await Promise.all([
-        safeFetch('/api/settings'),
-        safeFetch('/api/members'),
-        safeFetch('/api/lands'),
-        safeFetch('/api/directors'),
-      ]);
-      if(sRes?.settings) setSettings(sRes.settings);
-      if(mRes?.members) setMembers(mRes.members);
-      else { const snap = await getDocs(collection(db, 'members')); setMembers(snap.docs.map(d=>d.data())); }
-      if(lRes?.lands) setLands(lRes.lands);
-      else { try { const snap = await getDocs(collection(db, 'lands')); setLands(snap.docs.map(d=>d.data())); } catch {} }
-      if(dRes?.directors) setDirectors(dRes.directors);
-      else { try { const snap = await getDocs(collection(db, 'board_members')); setDirectors(snap.docs.map(d=>d.data())); } catch {} }
-    } finally { setLoading(false); }
-  }, []);
-
-  useEffect(()=>{ fetchAppData(); }, [fetchAppData]);
-
-  if(loading) return <div className="min-h-screen bg-slate-900 text-white flex items-center justify-center">লোড হচ্ছে...</div>;
-
-  return (
-    <div className="min-h-screen bg-slate-50 flex flex-col">
-      <Header settings={settings} />
-      <main className="flex-grow">
-        <HomePage settings={settings} members={members} lands={lands} directors={directors} />
-      </main>
-      <Footer settings={settings} />
-    </div>
-  );
-}
-export default App;
+// আপনার যদি firebaseConfig অন্য জায়গায় থাকে তাহলে শুধু নিচের 3 লাইন রাখেন
+const app = initializeApp(firebaseConfig);
+export const db = getFirestore(app);
+export const auth = getAuth(app);
