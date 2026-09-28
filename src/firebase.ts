@@ -15,3 +15,18 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app);
 export const auth = getAuth(app);
+// ... আপনার আগের firebase config আর db export ঠিক থাকবে ...
+
+// নিচের এই 2টা লাইন একদম শেষে Add করেন - এটা না থাকলে Build Fail হবে
+
+export const handleFirestoreError = (error: any, operation?: any) => {
+  console.error('Firestore Error:', operation, error);
+  return error;
+};
+
+export enum OperationType {
+  CREATE = 'create',
+  READ = 'read',
+  UPDATE = 'update',
+  DELETE = 'delete'
+}
